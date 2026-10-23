@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Run evidence (may contain real data) — never commit
+results/
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local databases / PyRIT memory
+*.db
+.pyrit/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

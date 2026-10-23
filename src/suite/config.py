@@ -2,12 +2,13 @@
 
 Secrets never live in the YAML. A value may contain ``${VAR}``, which is replaced from the
 environment (or a ``.env`` file in the working directory) before validation. Error messages
-name the variable, never its value.
+name the variable, never its value, and ``masked()`` hides every substituted value.
 """
 
 import os
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -16,7 +17,15 @@ import yaml
 from dotenv import dotenv_values
 from jsonpath_ng import parse as parse_jsonpath
 from jsonpath_ng.exceptions import JSONPathError
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from suite.models import ConfigError
 
@@ -66,6 +75,9 @@ class EndpointSpec(BaseModel):
     level: str | None = None
     redact: bool = True
     limits: Limits = Field(default_factory=Limits)
+
+    # Non-empty values that load_endpoint substituted for ${VAR}; masked() hides them.
+    _secret_values: frozenset[str] = PrivateAttr(default_factory=frozenset)
 
     @field_validator("url")
     @classmethod
@@ -124,24 +136,44 @@ def _check_single_placeholder(body: dict[str, Any]) -> None:
         raise ValueError(f"{PROMPT_PLACEHOLDER} may appear only once in the body value")
 
 
-def _interpolate(value: Any, env: Mapping[str, str], missing: list[str]) -> Any:
-    """Replace ``${VAR}`` in every string; record unset variable names in ``missing``."""
-    if isinstance(value, str):
+@dataclass
+class _Interpolation:
+    """One pass of ``${VAR}`` substitution over a parsed YAML document."""
 
+    env: Mapping[str, str]
+    missing: list[str] = field(default_factory=list)  # variable names that are not set
+    malformed: list[str] = field(default_factory=list)  # field paths holding a bad ``${...}``
+    used: set[str] = field(default_factory=set)  # non-empty values that were substituted
+
+    def walk(self, value: Any, where: str = "") -> Any:
+        """Substitute in every string; ``where`` is the field path, for error messages."""
+        if isinstance(value, str):
+            return self._string(value, where)
+        if isinstance(value, dict):
+            return {
+                key: self.walk(item, f"{where}.{key}" if where else str(key))
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [self.walk(item, f"{where}[{i}]") for i, item in enumerate(value)]
+        return value
+
+    def _string(self, text: str, where: str) -> str:
         def substitute(match: re.Match[str]) -> str:
             name = match.group(1)
-            if name not in env:
-                if name not in missing:
-                    missing.append(name)
+            if name not in self.env:
+                if name not in self.missing:
+                    self.missing.append(name)
                 return match.group(0)
-            return env[name]
+            if self.env[name]:
+                self.used.add(self.env[name])
+            return self.env[name]
 
-        return _ENV_REF.sub(substitute, value)
-    if isinstance(value, dict):
-        return {key: _interpolate(item, env, missing) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_interpolate(item, env, missing) for item in value]
-    return value
+        # A "${" that is not a well-formed reference (e.g. ${token}) would otherwise be sent
+        # literally. Check the template, not the result: a secret may legitimately contain "${".
+        if "${" in _ENV_REF.sub("", text):
+            self.malformed.append(where)
+        return _ENV_REF.sub(substitute, text)
 
 
 def _default_env() -> dict[str, str]:
@@ -182,22 +214,50 @@ def load_endpoint(path: Path, *, env: Mapping[str, str] | None = None) -> Endpoi
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: expected a YAML mapping of endpoint settings")
 
-    missing: list[str] = []
-    data = _interpolate(raw, env, missing)
-    if missing:
-        names = ", ".join("${" + name + "}" for name in missing)
+    interpolation = _Interpolation(env)
+    data = interpolation.walk(raw)
+    if interpolation.malformed:
+        raise ConfigError(
+            f"{path}: invalid variable reference in {', '.join(interpolation.malformed)}: "
+            "variable names must be UPPER_CASE letters, digits and underscores, like ${MY_TOKEN}"
+        )
+    if interpolation.missing:
+        names = ", ".join("${" + name + "}" for name in interpolation.missing)
         raise ConfigError(
             f"{path}: environment variable not set: {names} (define it in .env or the environment)"
         )
 
     try:
-        return EndpointSpec.model_validate(data)
+        spec = EndpointSpec.model_validate(data)
     except ValidationError as exc:
         raise ConfigError(f"{path}: {_describe(exc)}") from None
+    spec._secret_values = frozenset(interpolation.used)
+    return spec
+
+
+def _scrub(value: Any, secrets: list[str]) -> Any:
+    """Copy of ``value`` with every secret substring in any string replaced by ``***``."""
+    if isinstance(value, str):
+        for secret in secrets:
+            value = value.replace(secret, "***")
+        return value
+    if isinstance(value, dict):
+        return {key: _scrub(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub(item, secrets) for item in value]
+    return value
 
 
 def masked(spec: EndpointSpec) -> dict[str, Any]:
-    """The spec as a plain dict that is safe to store or print: header values become ``***``."""
-    dumped = spec.model_dump()
+    """The spec as a plain dict that is safe to store or print; the spec is not changed.
+
+    Every header value becomes ``***``. In every other string (url, body values, nested lists
+    and dicts, any field) each non-empty value that was substituted for a ``${VAR}`` becomes
+    ``***``. A secret typed literally into the YAML cannot be recognised, so keep secrets in
+    ``${VAR}`` references.
+    """
+    # Longest first, so a secret that contains another is not left half-visible.
+    secrets = sorted(spec._secret_values, key=len, reverse=True)
+    dumped: dict[str, Any] = _scrub(spec.model_dump(), secrets)
     dumped["headers"] = {name: "***" for name in dumped["headers"]}
     return dumped

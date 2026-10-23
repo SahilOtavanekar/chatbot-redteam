@@ -248,6 +248,86 @@ def test_masked_does_not_mutate_the_spec():
     assert spec.headers == {"Authorization": "Bearer s3cret"}
 
 
+SECRET_IN_URL_AND_BODY = """name: lab-bot
+type: http
+url: "http://h/chat?key=${KEY}"
+body:
+  api_key: "${KEY}"
+  message: "{prompt}"
+"""
+
+
+def test_masked_hides_interpolated_values_in_url_and_body(tmp_path):
+    spec = load_endpoint(write(tmp_path, SECRET_IN_URL_AND_BODY), env={"KEY": "s3cretvalue"})
+    out = masked(spec)
+    assert "s3cretvalue" not in json.dumps(out)
+    assert out["url"] == "http://h/chat?key=***"
+    assert out["body"] == {"api_key": "***", "message": "{prompt}"}
+    # the spec itself still holds the real values for the engine to send
+    assert spec.url == "http://h/chat?key=s3cretvalue"
+    assert spec.body == {"api_key": "s3cretvalue", "message": "{prompt}"}
+
+
+def test_masked_hides_interpolated_values_in_nested_lists(tmp_path):
+    p = write(
+        tmp_path,
+        """name: lab-bot
+type: http
+url: http://h/chat
+body:
+  auth: {tokens: ["${KEY}", "x-${KEY}"]}
+  message: "{prompt}"
+""",
+    )
+    spec = load_endpoint(p, env={"KEY": "s3cretvalue"})
+    out = masked(spec)
+    assert "s3cretvalue" not in json.dumps(out)
+    assert out["body"]["auth"] == {"tokens": ["***", "x-***"]}
+
+
+def test_masked_hides_the_longer_secret_when_one_contains_the_other(tmp_path):
+    p = write(tmp_path, SECRET_IN_URL_AND_BODY.replace('"{prompt}"', '"${LONG}{prompt}"'))
+    spec = load_endpoint(p, env={"KEY": "abc", "LONG": "abcdef"})
+    assert "def" not in json.dumps(masked(spec))
+
+
+def test_masked_leaves_a_spec_without_interpolation_unchanged_apart_from_headers():
+    spec = make_spec(headers={"X": "v"})
+    assert masked(spec) == {**spec.model_dump(), "headers": {"X": "***"}}
+
+
+@pytest.mark.parametrize("ref", ["${token}", "${Token}", "${MY-TOKEN}", "${}", "${ TOK }"])
+def test_leftover_placeholder_rejected(tmp_path, ref):
+    p = write(tmp_path, WITH_TOKEN.replace("${TOK}", ref))
+    with pytest.raises(ConfigError, match=r"headers\.Authorization") as e:
+        load_endpoint(p, env={"TOK": "s3cret", "token": "s3cret"})
+    assert str(e.value).startswith(str(p))
+    assert "UPPER_CASE" in str(e.value)
+    assert "s3cret" not in str(e.value)
+
+
+def test_leftover_placeholder_names_nested_body_path(tmp_path):
+    p = write(
+        tmp_path,
+        """name: lab-bot
+type: http
+url: http://h/chat
+body:
+  messages:
+    - content: "{prompt}"
+      key: "${lower}"
+""",
+    )
+    with pytest.raises(ConfigError, match=r"body\.messages\[0\]\.key"):
+        load_endpoint(p, env={})
+
+
+def test_secret_value_containing_dollar_brace_is_not_mistaken_for_a_leftover(tmp_path):
+    p = write(tmp_path, WITH_TOKEN)
+    spec = load_endpoint(p, env={"TOK": "pa${ss"})
+    assert spec.headers["Authorization"] == "Bearer pa${ss"
+
+
 def test_make_spec_builds_valid_http_spec_and_merges_limits():
     spec = make_spec(limits=dict(concurrency=2))
     assert isinstance(spec, EndpointSpec)

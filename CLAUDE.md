@@ -5,9 +5,23 @@ chatbot API **in parallel**, judges each reply deterministically, queues the res
 review, and generates an OWASP-aligned report. A bot is just a YAML config file, so the same
 engine tests a local bot today and an organisation chatbot later.
 
-**Status (2026-10-23): spec approved; implementation plan awaiting approval; no code yet.** Read
-`docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
-(see §16). Plan: `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
+**Status (paused 2026-10-23): v0.1 build in progress on branch `feat/v0.1` — Tasks 1–2 done
+and reviewed; Task 3 built, review found 2 Important issues, fix round 1 NOT yet started.**
+Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
+(see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
+
+## How to resume the build (next session)
+
+1. `git switch feat/v0.1` (should already be checked out); `uv sync`; `uv run pytest -q` → expect
+   112 passed on Python 3.13 (`.python-version` pins it).
+2. The build runs with **superpowers:subagent-driven-development** (Sahil's choice). Its ledger is
+   `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/progress.md` — **git-ignored, local only**.
+   Read it first: it has every ruling, deferred minor, and a `RESUME HERE` line. Trust the ledger
+   + `git log` over memory; never re-dispatch a task marked `complete`.
+3. Next action: Task 3 fix round 1 using `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/task-3-findings-round1.md`
+   (FIX_BASE `ebd8673`), then a scoped re-review, then Task 4. Run Tasks 4–16 without pausing;
+   stop before Tasks 17–18 — they need prompt text from Sahil.
+4. Sahil may first want to review progress; summarise from the ledger, don't re-run tasks.
 
 This project was split out of the `ai-red-teaming` lab (at `C:\dev\ai-red-teaming`). The lab's
 deliberately vulnerable bot is this framework's first owned test target.
@@ -39,25 +53,29 @@ deliberately vulnerable bot is this framework's first owned test target.
   10, NIST AI 600-1).
 - Work on a branch; open a PR; merge after CI is green. Check ports before starting a server.
 
-## Planned layout (not built yet — see the spec)
+## Layout (✔ = built so far; full map in the plan's "File map")
 
 ```
-src/suite/   config, adapters(PyRIT), prompts, engine, judge, evidence, report, review, compare, cli
-endpoints/   one YAML per bot (lab-bot, gandalf, <org-bot> later)
-prompts/     prompt packs (YAML/CSV); Sahil authors the prompt text
-results/     git-ignored run folders (run.json, memory.db, matrix.csv, report.*, review.csv)
-tests/       pytest, one suite per component
-docs/        specs/, HANDOFF.md, pyrit-analysis.md, pyrit-spike-findings.md
+src/suite/   ✔ models, ✔ config, ✔ prompts, ✔ patterns · planner, extract, engine, judge,
+             adapters/ (only PyRIT importer), evidence, report, run, review, compare, cli
+endpoints/   one YAML per bot (mock, lab-bot, gandalf-*); private/ subdir git-ignored (Task 15)
+prompts/     prompt packs (YAML/CSV); Sahil authors the text; private/ subdir git-ignored (Task 15)
+results/     git-ignored run folders (run.json, evidence.db, matrix.csv, report.*, review.csv)
+tests/       pytest, one suite per component (+ mockbot.py, factories.py, fakes.py)
+docs/        specs/, superpowers/plans/, HANDOFF.md, pyrit-*.md, validation/ (later)
 ```
 
-## Commands (once scaffolded)
+Decided 2026-10-23: v0.2 UI = **FastAPI + HTMX + Jinja2** with a JSON API (`/api/v1`) underneath, so
+a FastAPI + React frontend can replace the views later (spec §16.6). Not Streamlit, not CoPyRIT.
+
+## Commands
 
 ```bash
 uv sync
-uv run pytest
-uv run ruff check . && uv run ruff format .
-uv run mypy src
-# planned CLI:
+uv run pytest -q
+uv run ruff check . && uv run ruff format --check .
+uv run mypy
+# CLI (built in Task 15):
 uv run suite validate --endpoint endpoints/lab-bot.yaml --pack prompts/core
 uv run suite run      --endpoint endpoints/lab-bot.yaml --pack prompts/core
 uv run suite finalize --run results/<run-id>
@@ -66,5 +84,4 @@ uv run suite compare  --baseline results/<r1> --run results/<r2>
 
 ## Next step
 
-Sahil approves the plan (and spec §16 revisions) and picks an execution method → build v0.1 with
-TDD, task by task, validating against mock + lab bot + Gandalf.
+Resume the subagent-driven build at Task 3 fix round 1 (see "How to resume" above).

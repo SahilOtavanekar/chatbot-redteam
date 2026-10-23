@@ -16,13 +16,24 @@ owned test target.
 
 ## Where we are
 
-- **Spec approved by Sahil (2026-10-23)** — `docs/specs/2026-10-23-v0.1-design.md`. Planning then
-  found 4 revisions, logged in its **§16** (engine calls PyRIT targets directly; own `evidence.db`;
-  Gandalf judged by a deterministic password check because `GandalfScorer` needs an LLM; per-prompt
-  rules in plain Python). Sahil reviews §16 together with the plan.
-- **Implementation plan written, awaiting Sahil's approval + execution choice:**
-  `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md` (18 tasks, TDD).
-- **No code, no repo init yet** — by design. Task 1 of the plan does `git init` + scaffold.
+- **Spec approved (2026-10-23)** — `docs/specs/2026-10-23-v0.1-design.md`; §16 logs the
+  revisions found while planning, plus the UI decision (§16.6: FastAPI + HTMX + Jinja2 for v0.2).
+- **Plan approved; execution = subagent-driven** (fresh implementer + reviewer per task):
+  `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md` (18 tasks, TDD). Sahil also approved
+  git-ignored `endpoints/private/` + `prompts/private/` (added to Task 15).
+- **Build paused 2026-10-23 at Sahil's request, on branch `feat/v0.1`** (git initialised; `main`
+  holds only the planning docs):
+  | Task | State | Commits |
+  |---|---|---|
+  | 1 Scaffold, shared types, PyRIT boundary test | complete, review clean | ab54a0a |
+  | 2 Endpoint config (+ fix: secrets masked everywhere, bad `${...}` rejected) | complete, review clean | 32ac2a9, 4645e42 |
+  | 3 Prompt packs + pattern library | built; review = **needs fixes** (2 Important) | ebd8673 |
+  Test suite: 112 passed on Python 3.13 (Executed by the Task 3 implementer). Task 3's open
+  findings: the card-number redaction regex destroys run ids/dates (spec N4), and the email regex
+  is quadratic on very long replies — exact findings + rulings in
+  `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/task-3-findings-round1.md`.
+- The SDD **ledger** `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/progress.md` (git-ignored,
+  this machine only) holds every ruling and deferred minor finding. Read it before resuming.
 - A **PyRIT 1.1.0 spike was run** (Executed, throwaway) and proved the core approach. Findings and
   working code patterns: `docs/pyrit-spike-findings.md`. Full tool analysis: `docs/pyrit-analysis.md`.
 
@@ -60,9 +71,10 @@ subset (baseline, gpt-is-password-encoded, gandalf-the-white).
 
 ## Next step (the gate)
 
-1. Sahil reviews the plan + spec §16 and chooses execution (subagent-driven or native).
-2. Build v0.1 task by task with TDD (Task 1 = `git init` + scaffold on branch `feat/v0.1`),
-   validating mock → lab bot → Gandalf. Tasks 17–18 need prompt text from Sahil.
+1. Sahil reviews progress (ledger + `git log feat/v0.1`); answer from the ledger, don't re-run tasks.
+2. Resume superpowers:subagent-driven-development: Task 3 fix round 1 (FIX_BASE `ebd8673`) →
+   scoped re-review → Tasks 4–16 without pausing → stop before 17–18 (need Sahil's prompt text) →
+   final whole-branch review → finishing-a-development-branch (ask before creating a GitHub remote).
 
 ## Environment notes
 

@@ -3,6 +3,7 @@
 from typing import Any
 
 from suite.config import EndpointSpec
+from suite.prompts import Checks, Pack, Prompt
 
 
 def make_spec(**overrides: Any) -> EndpointSpec:
@@ -20,3 +21,18 @@ def make_spec(**overrides: Any) -> EndpointSpec:
     }
     fields.update(overrides)
     return EndpointSpec(**fields)
+
+
+def make_prompt(
+    id: str = "P-1",
+    category: str = "LLM01",
+    text: str = "hello",
+    repeat: int = 1,
+    **checks: Any,
+) -> Prompt:
+    """Build a valid Prompt; extra keywords (``must_not_contain=[...]``, ...) become its checks."""
+    return Prompt(id=id, category=category, prompt=text, repeat=repeat, checks=Checks(**checks))
+
+
+def make_pack(*prompts: Prompt, name: str = "t") -> Pack:
+    return Pack(name=name, prompts=list(prompts))

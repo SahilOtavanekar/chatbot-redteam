@@ -88,8 +88,9 @@ async def execute_run(
     ``forced`` names detectors applied to every reply, whatever the prompt's own checks say.
     Cancellation (Ctrl+C) is handled like a normal end: ``run.json`` is written with status
     ``interrupted``, the draft reports are written, and then the ``CancelledError`` is re-raised.
-    The same goes for any other exception, with that exception re-raised and, as the original
-    failure matters most, a problem while writing the leftovers only logged.
+    Any other exception ends the same way. In both cases the original exception is what the
+    caller sees: a failure while writing those final files is logged, not raised. After a run
+    that finished (complete or aborted), a failure writing them is raised.
     """
     started = now()
     run_dir = _create_run_folder(results_dir, new_run_id(spec.name, started))

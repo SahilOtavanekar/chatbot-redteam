@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatbot red-team report</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif; line-height: 1.45; color: #1b1b1b; background: #fff; max-width: 62rem; margin: 0 auto; padding: 1rem 1.25rem 3rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.2rem; margin: 2rem 0 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px solid #c9ccd1; }
+  .banner { margin: 1rem 0; padding: 0.6rem 0.9rem; border: 2px solid; font-weight: 700; }
+  .banner.draft { background: #fff4d6; border-color: #b36b00; color: #5c3600; }
+  .banner.final { background: #e3f1e6; border-color: #2d6a3e; color: #173d22; }
+  dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; margin: 0.5rem 0 1rem; }
+  dl.facts dt { font-weight: 600; }
+  dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+  .legend { margin: 1rem 0; padding: 0.6rem 0.9rem; background: #f3f4f6; border-left: 4px solid #6b7280; font-size: 0.92rem; }
+  .note { color: #555; font-size: 0.88rem; margin: 0.25rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+  th, td { border: 1px solid #c9ccd1; padding: 0.35rem 0.6rem; text-align: left; vertical-align: top; }
+  th { background: #eef0f3; }
+  .num { text-align: right; }
+  .badge { display: inline-block; padding: 0 0.5rem; border: 2px solid; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
+  .v-pass { background: #e3f1e6; border-color: #2d6a3e; border-style: solid; color: #173d22; }
+  .v-fail { background: #fde4e1; border-color: #a4231a; border-style: double; border-width: 4px; padding: 0 0.4rem; color: #6b1510; }
+  .v-inconclusive { background: #fff4d6; border-color: #b36b00; border-style: dashed; color: #5c3600; }
+  .v-needs_review { background: #e4ebf7; border-color: #34568b; border-style: dotted; color: #1d3459; }
+  .prompt { margin: 1rem 0; padding: 0.6rem 0.9rem; border: 1px solid #c9ccd1; border-radius: 0.4rem; }
+  .prompt h3 { margin: 0 0 0.4rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .cat { color: #555; font-weight: 400; font-size: 0.9rem; }
+  .attempt { margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px solid #e1e3e6; }
+  .meta { color: #555; font-size: 0.88rem; }
+  ul.reasons { margin: 0.25rem 0; padding-left: 1.25rem; }
+  pre { margin: 0.4rem 0; padding: 0.5rem 0.7rem; background: #f6f7f8; border: 1px solid #dfe2e5; font-family: Consolas, "Courier New", monospace; font-size: 0.88rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  details > summary { cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Chatbot red-team report</h1>
+<div class="banner {{ 'final' if data.final else 'draft' }}">{{ banner }}</div>
+<dl class="facts">
+{% for label, value in facts %}
+  <dt>{{ label }}</dt><dd>{{ value }}</dd>
+{% endfor %}
+</dl>
+<p class="legend">{{ legend }}</p>
+
+<h2>Summary</h2>
+<table>
+  <tr><th>Prompts</th><th>Pass</th><th>Fail</th><th>Inconclusive</th><th>Needs review</th></tr>
+  <tr>
+    <td class="num">{{ data.prompts | length }}</td>
+    <td class="num">{{ data.totals[Verdict.PASS] }}</td>
+    <td class="num">{{ data.totals[Verdict.FAIL] }}</td>
+    <td class="num">{{ data.totals[Verdict.INCONCLUSIVE] }}</td>
+    <td class="num">{{ data.totals[Verdict.NEEDS_REVIEW] }}</td>
+  </tr>
+</table>
+<p class="note">Counts are prompts. A prompt's verdict is the worst of its attempts: Fail, then Inconclusive, then Needs review, then Pass.</p>
+
+<h2>By OWASP LLM Top 10 category</h2>
+{% if data.categories %}
+<table>
+  <tr><th>Code</th><th>Category</th><th>Prompts</th><th>Pass</th><th>Fail</th><th>Inconclusive</th><th>Needs review</th><th>Pass rate</th></tr>
+{% for c in data.categories %}
+  <tr>
+    <td>{{ c.code }}</td><td>{{ c.name }}</td>
+    <td class="num">{{ c.total }}</td><td class="num">{{ c.passed }}</td><td class="num">{{ c.failed }}</td>
+    <td class="num">{{ c.inconclusive }}</td><td class="num">{{ c.needs_review }}</td>
+    <td class="num">{{ c.pass_rate }}%</td>
+  </tr>
+{% endfor %}
+</table>
+<p class="note">Pass rate = prompts with verdict Pass, as a share of the category's prompts. Inconclusive and Needs review are not passes.</p>
+{% else %}
+<p>No prompts were recorded for this run.</p>
+{% endif %}
+
+<h2>Prompts</h2>
+{% for p in data.prompts %}
+<section class="prompt">
+  <h3>{{ p.prompt_id }} <span class="cat">{{ p.category }}</span> <span class="badge v-{{ p.verdict.value }}">{{ p.verdict | verdict_label(p.attempts | map(attribute="decided_by")) }}</span></h3>
+  <div><strong>Pass if:</strong> {{ p.pass_if or "(not specified)" }}</div>
+  <details>
+    <summary>Prompt sent</summary>
+    <pre>{{ p.prompt_text }}</pre>
+  </details>
+{% for a in p.attempts %}
+  <div class="attempt">
+    <div><strong>{{ a.attempt_id }}</strong> <span class="badge v-{{ a.verdict.value }}">{{ a.verdict | verdict_label([a.decided_by]) }}</span>
+      <span class="meta">decided by {{ a.decided_by.value }}{% if a.hint %} · hint: {{ a.hint }}{% endif %}{% if a.error_kind %} · error: {{ a.error_kind }}{% endif %}{% if a.http_status is not none %} · HTTP {{ a.http_status }}{% endif %}{% if a.latency_ms is not none %} · {{ a.latency_ms }} ms{% endif %}</span></div>
+{% if a.reasons %}
+    <ul class="reasons">
+{% for reason in a.reasons %}
+      <li>{{ reason }}</li>
+{% endfor %}
+    </ul>
+{% endif %}
+{% if a.human_note %}
+    <div><strong>Reviewer note:</strong> {{ a.human_note }}</div>
+{% endif %}
+{% if a.reply is none %}
+    <div class="meta">(no reply)</div>
+{% elif a.reply == "" %}
+    <div class="meta">(empty reply)</div>
+{% else %}
+    <details>
+      <summary>Reply ({{ a.reply | length }} characters)</summary>
+      <pre>{{ a.reply }}</pre>
+    </details>
+{% endif %}
+  </div>
+{% endfor %}
+</section>
+{% endfor %}
+</body>
+</html>

@@ -243,8 +243,9 @@ async def test_aclose_closes_the_shared_client(mockbot, pyrit_ready):
 
 
 def test_build_sender_rejects_a_type_it_has_no_adapter_for():
-    spec = make_spec(type="gandalf", url=None, body=None, level="baseline")
-    with pytest.raises(ValueError, match="gandalf"):
+    spec = make_spec()
+    spec.type = "playwright"  # config does not accept this type until v0.2; assignment skips it
+    with pytest.raises(ValueError, match="playwright"):
         build_sender(spec)
 
 

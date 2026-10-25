@@ -133,21 +133,28 @@ class EvidenceStore:
                 "not needs_review"
             )
         with self._conn:
-            row = self._conn.execute(
-                "SELECT verdict, decided_by FROM attempts WHERE attempt_id = ?", (attempt_id,)
-            ).fetchone()
-            if row is None:
-                raise ConfigError(f"unknown attempt {attempt_id}")
-            current, decided_by = Verdict(row[0]), DecidedBy(row[1])
-            if current is not Verdict.NEEDS_REVIEW and decided_by is not DecidedBy.HUMAN:
+            # The rule is part of the UPDATE itself, so deciding and writing are one statement.
+            updated = self._conn.execute(
+                "UPDATE attempts SET verdict = ?, decided_by = ?, human_note = ?"
+                " WHERE attempt_id = ? AND (verdict = ? OR decided_by = ?)",
+                (
+                    verdict.value,
+                    DecidedBy.HUMAN.value,
+                    note,
+                    attempt_id,
+                    Verdict.NEEDS_REVIEW.value,
+                    DecidedBy.HUMAN.value,
+                ),
+            )
+            if updated.rowcount == 0:
+                known = self._conn.execute(
+                    "SELECT 1 FROM attempts WHERE attempt_id = ?", (attempt_id,)
+                ).fetchone()
+                if known is None:
+                    raise ConfigError(f"unknown attempt {attempt_id}")
                 raise ConfigError(
                     f"attempt {attempt_id} was decided by rule; only queued items can be reviewed"
                 )
-            self._conn.execute(
-                "UPDATE attempts SET verdict = ?, decided_by = ?, human_note = ?"
-                " WHERE attempt_id = ?",
-                (verdict.value, DecidedBy.HUMAN.value, note, attempt_id),
-            )
 
     def prompts(self) -> list[PromptRow]:
         """Every prompt, in pack order."""
@@ -214,7 +221,9 @@ def new_run_id(endpoint_name: str, now: datetime) -> str:
 
 def write_run_json(run_dir: Path, data: dict[str, Any]) -> None:
     """Write ``run.json`` atomically: a crash mid-write never leaves a truncated file."""
-    text = json.dumps(data, indent=2, ensure_ascii=False)  # data that cannot be encoded fails here
+    # Data that is not JSON-serialisable fails here, before any file exists. A lone surrogate
+    # passes (ensure_ascii=False) and fails later, at the write; the cleanup below covers that.
+    text = json.dumps(data, indent=2, ensure_ascii=False)
     descriptor, temp_name = tempfile.mkstemp(dir=run_dir, prefix=f"{RUN_JSON}.", suffix=".tmp")
     temp = Path(temp_name)
     try:

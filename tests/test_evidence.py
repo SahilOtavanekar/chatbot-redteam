@@ -341,15 +341,56 @@ def test_run_json_roundtrip_utf8(tmp_path: Path) -> None:
     assert '\n  "pack"' in text  # indent=2
 
 
-def test_write_run_json_replaces_atomically(tmp_path: Path) -> None:
+def test_write_run_json_overwrites_and_leaves_no_temp_file(tmp_path: Path) -> None:
     write_run_json(tmp_path, {"version": 1})
     write_run_json(tmp_path, {"version": 2})
     assert read_run_json(tmp_path) == {"version": 2}
+    assert [p.name for p in tmp_path.iterdir()] == ["run.json"]
 
-    # A failure while writing leaves the previous file untouched and no temp file behind.
+
+def test_write_run_json_unserialisable_data_fails_before_touching_disk(tmp_path: Path) -> None:
+    write_run_json(tmp_path, {"version": 1})
     with pytest.raises(TypeError):
-        write_run_json(tmp_path, {"version": 3, "bad": object()})
-    assert read_run_json(tmp_path) == {"version": 2}
+        write_run_json(tmp_path, {"version": 2, "bad": object()})
+    assert read_run_json(tmp_path) == {"version": 1}
+    assert [p.name for p in tmp_path.iterdir()] == ["run.json"]
+
+
+def test_write_run_json_failed_replace_keeps_old_file_and_removes_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_run_json(tmp_path, {"version": 1})
+    old_bytes = (tmp_path / "run.json").read_bytes()
+    seen_at_replace: list[list[str]] = []
+
+    def failing_replace(src: object, dst: object) -> None:
+        seen_at_replace.append(sorted(p.name for p in tmp_path.iterdir()))
+        raise OSError("disk went away")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("suite.evidence.os.replace", failing_replace)
+        with pytest.raises(OSError, match="disk went away"):
+            write_run_json(tmp_path, {"version": 2})
+
+    # The new content really was written to a temp file first (so the cleanup had work to do) ...
+    assert len(seen_at_replace) == 1
+    assert len(seen_at_replace[0]) == 2
+    assert "run.json" in seen_at_replace[0]
+    # ... and afterwards the old file is byte-for-byte intact and the temp file is gone.
+    assert (tmp_path / "run.json").read_bytes() == old_bytes
+    assert [p.name for p in tmp_path.iterdir()] == ["run.json"]
+
+
+def test_write_run_json_failure_mid_write_keeps_old_file_and_removes_temp(tmp_path: Path) -> None:
+    write_run_json(tmp_path, {"version": 1})
+    old_bytes = (tmp_path / "run.json").read_bytes()
+
+    # A lone surrogate survives json.dumps(ensure_ascii=False) but cannot be encoded as UTF-8,
+    # so the failure happens inside handle.write, after the temp file was created.
+    with pytest.raises(UnicodeEncodeError):
+        write_run_json(tmp_path, {"version": 2, "note": "\ud83d"})
+
+    assert (tmp_path / "run.json").read_bytes() == old_bytes
     assert [p.name for p in tmp_path.iterdir()] == ["run.json"]
 
 

@@ -4,7 +4,6 @@ from collections.abc import Iterator
 
 import pytest
 
-from suite.adapters import init_pyrit
 from tests.mockbot import MockState, running_mockbot
 
 
@@ -25,4 +24,8 @@ def mockbot(_mockbot_server: tuple[str, MockState]) -> tuple[str, MockState]:
 @pytest.fixture
 async def pyrit_ready() -> None:
     """PyRIT targets need central memory; this initialises it once per process."""
+    # Imported here, not at the top: importing suite.adapters loads PyRIT (about 6 s), and a
+    # run that selects only tests without this fixture should not pay for it.
+    from suite.adapters import init_pyrit
+
     await init_pyrit()

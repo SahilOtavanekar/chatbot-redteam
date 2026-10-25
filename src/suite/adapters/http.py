@@ -8,10 +8,11 @@ module overrides them (see docs/pyrit-spike-findings.md):
 * It never checks the HTTP status. Our callback hands the response to ``extract_reply``, which
   raises ``SendError`` for a non-2xx status, an unreadable body or an empty reply.
 * It opens a new connection per prompt unless given a client. One shared ``httpx.AsyncClient``
-  serves every send.
+  serves every send. That client refuses cookies, so every attempt stays single-turn.
 """
 
 import json
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from urllib.parse import urlsplit
 
 import httpx
@@ -19,11 +20,9 @@ from pyrit.converter import JsonStringConverter
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import HTTPTarget
 
-from suite.config import PROMPT_PLACEHOLDER, EndpointSpec
+from suite.config import PROMPT_MARKER, PROMPT_PLACEHOLDER, EndpointSpec
 from suite.extract import extract_reply
 from suite.models import SendError
-
-PROMPT_MARKER = "{PROMPT}"  # PyRIT's default placeholder in a raw request
 
 
 def build_raw_request(spec: EndpointSpec) -> str:
@@ -53,7 +52,11 @@ class PyritHttpSender:
         limits = spec.limits
         self._spec = spec
         self._converter = JsonStringConverter()
+        # A jar that accepts nothing: a server's Set-Cookie must not tie later attempts together
+        # (v0.1 is single-turn). A Cookie header in the spec's headers is still sent as written.
+        no_cookies = CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
         self._client = httpx.AsyncClient(
+            cookies=no_cookies,
             timeout=limits.timeout_s,
             limits=httpx.Limits(
                 max_connections=limits.concurrency, max_keepalive_connections=limits.concurrency
@@ -62,7 +65,7 @@ class PyritHttpSender:
         # max_requests_per_minute stays unset: the engine's RateLimiter owns rate limits.
         self._target = HTTPTarget(
             http_request=build_raw_request(spec),
-            use_tls=spec.url.startswith("https"),
+            use_tls=urlsplit(spec.url).scheme == "https",  # parsed: the scheme may be upper-case
             callback_function=self._callback,
             client=self._client,
             follow_redirects=False,

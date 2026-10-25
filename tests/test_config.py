@@ -334,3 +334,96 @@ def test_make_spec_builds_valid_http_spec_and_merges_limits():
     assert (spec.name, spec.authorized, spec.url) == ("t", "test", "http://127.0.0.1:9/chat")
     assert spec.body == {"message": "{prompt}"}
     assert spec.limits == Limits(concurrency=2)
+
+
+# --- unsafe headers and urls ----------------------------------------------------------------
+# PyRIT builds the request URL from a Host header and copies header lines straight out of a raw
+# request, so a spec must not be able to redirect a request, inject a header, or receive a prompt
+# anywhere but the body.
+
+
+def header_yaml(headers: str, url: str = "http://x.test/c") -> str:
+    return f'name: b\ntype: http\nurl: "{url}"\nheaders:\n{headers}body: {{m: "{{prompt}}"}}\n'
+
+
+def header_line(name: str, value: str) -> str:
+    """One YAML header line; JSON quoting writes control characters as escapes YAML decodes."""
+    return f"  {json.dumps(name)}: {json.dumps(value)}\n"
+
+
+@pytest.mark.parametrize("name", ["Host", "host", "HOST", "Content-Length", "content-length"])
+def test_headers_cannot_set_host_or_content_length(tmp_path, name):
+    p = write(tmp_path, header_yaml(header_line(name, "v")))
+    with pytest.raises(ConfigError, match="headers") as e:
+        load_endpoint(p, env={})
+    assert str(e.value).startswith(str(p))
+    assert "cannot be set" in str(e.value)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Host ", " host", "Host: evil.test", "X:Y", "X Y", "X-A\nB", "X-A\r\nHost", "X-{PROMPT}", ""],
+)
+def test_header_names_must_be_plain_tokens(tmp_path, name):
+    # PyRIT strips and splits at the first colon, so "Host :" would otherwise override Host.
+    p = write(tmp_path, header_yaml(header_line(name, "v")))
+    with pytest.raises(ConfigError, match="headers") as e:
+        load_endpoint(p, env={})
+    assert str(e.value).startswith(str(p))
+    assert "header name" in str(e.value)
+
+
+@pytest.mark.parametrize("value", ["a\nb", "a\rb", "a\r\nX-Evil: 1"])
+def test_header_values_reject_line_breaks(tmp_path, value):
+    p = write(tmp_path, header_yaml(header_line("X-Key", value)))
+    with pytest.raises(ConfigError, match="headers") as e:
+        load_endpoint(p, env={})
+    assert str(e.value).startswith(str(p))
+    assert "X-Key" in str(e.value)
+    assert "CR or LF" in str(e.value)
+
+
+def test_line_break_error_never_echoes_the_secret_value(tmp_path):
+    p = write(tmp_path, WITH_TOKEN)
+    with pytest.raises(ConfigError, match="headers") as e:
+        load_endpoint(p, env={"TOK": "s3cret\r\nX-Evil: 1"})
+    assert str(e.value).startswith(str(p))
+    assert "s3cret" not in str(e.value)
+    assert "X-Evil" not in str(e.value)
+    assert e.value.__cause__ is None
+
+
+def test_prompt_marker_is_rejected_in_a_header_value(tmp_path):
+    p = write(tmp_path, header_yaml('  X-Key: "id-{PROMPT}"\n'))
+    with pytest.raises(ConfigError, match="headers") as e:
+        load_endpoint(p, env={})
+    assert str(e.value).startswith(str(p))
+    assert "{PROMPT}" in str(e.value)
+    assert "X-Key" in str(e.value)
+
+
+@pytest.mark.parametrize("url", ["http://x.test/{PROMPT}", "http://x.test/c?q={PROMPT}"])
+def test_prompt_marker_is_rejected_in_the_url(tmp_path, url):
+    p = write(tmp_path, header_yaml("  X-Key: v\n", url=url))
+    with pytest.raises(ConfigError, match="url") as e:
+        load_endpoint(p, env={})
+    assert str(e.value).startswith(str(p))
+    assert "{PROMPT}" in str(e.value)
+
+
+def test_ordinary_headers_are_accepted(tmp_path):
+    p = write(
+        tmp_path,
+        header_yaml(
+            '  Authorization: "Bearer ${TOK}"\n  X-Api-Key: k\n  Cookie: a=b\n'
+            "  Content-Type: application/json\n  x_odd.name-1: v\n"
+        ),
+    )
+    spec = load_endpoint(p, env={"TOK": "t"})
+    assert list(spec.headers) == [
+        "Authorization",
+        "X-Api-Key",
+        "Cookie",
+        "Content-Type",
+        "x_odd.name-1",
+    ]

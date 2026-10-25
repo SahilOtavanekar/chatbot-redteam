@@ -8,6 +8,7 @@ chosen by the first control token in the message:
     [[500]]       500                            [[refuse]]    200, a refusal
     [[429]]       429, Retry-After: 0            no token      200, "echo: " + message
     [[429-once]]  429 the first time that exact message is seen, then normal
+    [[set-cookie]]  200, normal reply, and a Set-Cookie header
 
     POST /chat   {"user_id": ..., "message": ...}  ->  {"reply": ...}
     GET  /stats  the ``MockState`` counters as JSON
@@ -44,6 +45,7 @@ TOKENS = frozenset(
         "[[html]]",
         "[[slow]]",
         "[[refuse]]",
+        "[[set-cookie]]",
     }
 )
 _TOKEN = re.compile(r"\[\[[a-z0-9-]+\]\]")
@@ -60,6 +62,7 @@ class MockState:
     delay_s: float = 0.0  # every valid chat request waits this long before replying
     seen: set[str] = field(default_factory=set)  # every message received
     client_ports: set[int] = field(default_factory=set)  # source ports; one per TCP connection
+    last_cookie: str | None = None  # the Cookie header of the latest chat request; None if absent
     # Bumped by reset(). A handler still running from before a reset must not touch the new
     # counters (e.g. a [[slow]] request whose client gave up), or in_flight would go negative.
     generation: int = 0
@@ -72,6 +75,7 @@ class MockState:
         self.delay_s = 0.0
         self.seen = set()
         self.client_ports = set()
+        self.last_cookie = None
         self.generation += 1
 
     def snapshot(self) -> dict[str, Any]:
@@ -82,6 +86,7 @@ class MockState:
             "delay_s": self.delay_s,
             "seen": sorted(self.seen),
             "client_ports": sorted(self.client_ports),
+            "last_cookie": self.last_cookie,
         }
 
 
@@ -153,6 +158,10 @@ async def _reply(send: Send, token: str | None, message: str, first_time: bool) 
         await _respond(send, 200, b"<html>oops</html>", content_type="text/html")
     elif token == "[[refuse]]":
         await _json(send, 200, {"reply": "I'm sorry, I can't help with that."})
+    elif token == "[[set-cookie]]":
+        reply = json.dumps({"reply": "echo: " + message}).encode("utf-8")
+        headers = ((b"set-cookie", b"session=abc123; Path=/"),)
+        await _respond(send, 200, reply, extra_headers=headers)
     else:  # no token, [[slow]] (already waited), or [[429-once]] seen before
         await _json(send, 200, {"reply": "echo: " + message})
 
@@ -166,6 +175,8 @@ async def _handle_chat(scope: Scope, receive: Receive, send: Send) -> None:
     client = scope.get("client")
     if client:
         state.client_ports.add(client[1])
+    cookies = [value for name, value in scope["headers"] if name == b"cookie"]
+    state.last_cookie = cookies[0].decode("latin-1") if cookies else None
     message = _message_of(body)
     if message is None:
         await _json(send, 422, {"detail": "expected JSON with a string 'message'"})

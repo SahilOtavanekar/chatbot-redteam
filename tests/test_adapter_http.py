@@ -61,12 +61,40 @@ def test_raw_request_host_header_never_carries_url_credentials():
     assert "Host: 127.0.0.1:9\n" in request
 
 
+@pytest.mark.parametrize(
+    ("url", "use_tls", "built_url"),
+    [
+        ("https://bot.example.com/chat", True, "https://bot.example.com/chat"),
+        ("HTTPS://bot.example.com/chat", True, "https://bot.example.com/chat"),
+        ("http://bot.example.com/chat", False, "http://bot.example.com/chat"),
+        ("HTTP://bot.example.com/chat", False, "http://bot.example.com/chat"),
+    ],
+)
+async def test_tls_follows_the_parsed_scheme_in_any_case(pyrit_ready, url, use_tls, built_url):
+    # An upper-case HTTPS scheme must never downgrade to plaintext (header secrets travel too).
+    spec = make_spec(url=url, headers={"X-Key": "k"})
+    sender = build_sender(spec)
+    try:
+        assert sender._target.use_tls is use_tls
+        assert sender._target.parse_raw_http_request(build_raw_request(spec))[2] == built_url
+    finally:
+        await sender.aclose()
+
+
 # --- sending against the mock bot -------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "text",
-    ['say "hi"', "back\\slash", "two\nlines", "tab\tend", "naïve – 日本語 – 😀"],
+    [
+        'say "hi"',
+        "back\\slash",
+        "two\nlines",
+        "tab\tend",
+        "naïve – 日本語 – 😀",
+        "literal {PROMPT} marker",  # PyRIT's own placeholder must not be substituted twice
+        "literal {prompt} placeholder",
+    ],
 )
 async def test_send_roundtrips_tricky_text(mockbot, pyrit_ready, text):  # Review Focus 1
     url, state = mockbot
@@ -176,6 +204,35 @@ async def test_reuses_connections(mockbot, pyrit_ready):
         await sender.aclose()
 
 
+async def test_server_set_cookies_are_not_sent_back(mockbot, pyrit_ready):
+    # Every attempt is single-turn: a bot's session cookie must not tie replies together.
+    url, state = mockbot
+    sender = build_sender(make_spec(url=f"{url}/chat"))
+    try:
+        assert await sender.send("first [[set-cookie]]") == "echo: first [[set-cookie]]"
+        assert state.last_cookie is None
+        await sender.send("second")
+        assert state.last_cookie is None
+        await sender.send("third")
+        assert state.last_cookie is None
+    finally:
+        await sender.aclose()
+
+
+async def test_a_cookie_header_from_the_spec_is_sent_on_every_request(mockbot, pyrit_ready):
+    url, state = mockbot
+    sender = build_sender(make_spec(url=f"{url}/chat", headers={"Cookie": "a=b"}))
+    try:
+        await sender.send("first [[set-cookie]]")
+        assert state.last_cookie == "a=b"
+        await sender.send("second")
+        assert state.last_cookie == "a=b"  # the server's cookie is not added to it
+        await sender.send("third")
+        assert state.last_cookie == "a=b"
+    finally:
+        await sender.aclose()
+
+
 async def test_aclose_closes_the_shared_client(mockbot, pyrit_ready):
     url, _ = mockbot
     sender = build_sender(make_spec(url=f"{url}/chat"))
@@ -199,7 +256,9 @@ def test_mock_state_reset_clears_everything():
     state.delay_s = 1.0
     state.seen.add("m")
     state.client_ports.add(1)
+    state.last_cookie = "a=b"
     state.reset()
+    assert state.last_cookie is None
     assert (state.count, state.in_flight, state.peak_in_flight) == (0, 0, 0)
     assert (state.last_body, state.delay_s, state.seen, state.client_ports) == (
         b"",

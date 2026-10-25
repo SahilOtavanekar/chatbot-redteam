@@ -43,7 +43,14 @@ GANDALF_LEVELS: tuple[str, ...] = (
 )
 
 PROMPT_PLACEHOLDER = "{prompt}"
+# PyRIT's own placeholder in the raw request the HTTP adapter builds. A url or header holding it
+# would receive the prompt, so config rejects it there; the prompt belongs in the body only.
+PROMPT_MARKER = "{PROMPT}"
 _ENV_REF = re.compile(r"\$\{([A-Z0-9_]+)\}")
+# PyRIT strips a header name and splits the line at the first colon, so only plain tokens
+# (RFC 9110) are safe: anything else could smuggle in a Host override or a second header.
+_HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+_DERIVED_HEADERS = frozenset({"host", "content-length"})  # taken from the url and the body
 
 
 class Limits(BaseModel):
@@ -86,6 +93,32 @@ class EndpointSpec(BaseModel):
             parts = urlsplit(value)
             if parts.scheme not in ("http", "https") or not parts.netloc:
                 raise ValueError("url must be an absolute http:// or https:// address")
+            if PROMPT_MARKER in value:
+                raise ValueError(
+                    f"url must not contain {PROMPT_MARKER}; the prompt goes in the body"
+                )
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def _headers_are_safe(cls, value: dict[str, str]) -> dict[str, str]:
+        # Messages name a header only once its name is known to be a plain token, and never
+        # quote a value: a value may be a secret substituted from ${VAR}.
+        for name, text in value.items():
+            if not _HEADER_NAME.fullmatch(name):
+                raise ValueError(
+                    "a header name may contain only letters, digits and these symbols: "
+                    "!#$%&'*+-.^_`|~"
+                )
+            if name.lower() in _DERIVED_HEADERS:
+                raise ValueError(f"the {name} header cannot be set; it comes from the url and body")
+            if "\r" in text or "\n" in text:
+                raise ValueError(f"header {name!r}: the value must not contain CR or LF")
+            if PROMPT_MARKER in text:
+                raise ValueError(
+                    f"header {name!r}: the value must not contain {PROMPT_MARKER}; "
+                    "the prompt goes in the body"
+                )
         return value
 
     @field_validator("reply")

@@ -35,9 +35,11 @@ async def test_100_prompts_at_50_concurrency_under_6s(mockbot, pyrit_ready):
         elapsed = time.perf_counter() - t0
     finally:
         await sender.aclose()
-    print(f"N1 benchmark: {elapsed:.2f} s, peak in-flight {state.peak_in_flight}")
-    assert stats.sent_requests == 100
-    assert len(outcomes) == 100
-    assert all(o.error is None for o in outcomes)
-    assert state.peak_in_flight == 50
-    assert elapsed < 6.0
+    measured = (
+        f"elapsed {elapsed:.2f} s (limit 6.0 s), peak in-flight {state.peak_in_flight} (want 50)"
+    )
+    assert stats.sent_requests == 100, measured
+    assert len(outcomes) == 100, measured
+    assert all(o.error is None for o in outcomes), measured
+    assert state.peak_in_flight == 50, measured
+    assert elapsed < 6.0, measured

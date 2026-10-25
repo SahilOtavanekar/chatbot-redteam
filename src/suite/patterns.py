@@ -8,10 +8,12 @@ timestamps, the canary) and they must stay fast on long, degenerate text.
 
 ``card_number`` is a two-step check. ``PATTERNS["card_number"]`` is a regex that finds card-shaped
 *candidates* (conventional digit groupings, not glued to other word characters), and a Luhn
-checksum, which no regex can express, confirms them. :func:`redact` and :func:`rule_matches` both
-apply that checksum through one table (``_CONFIRM``), so there is a single definition of "a card
-number". A caller that runs the bare pattern (``compile_rule("card_number")[1].search(...)``)
-sees candidates only; use :func:`rule_matches` for the judge-facing answer.
+checksum, which no regex can express, confirms them: the whole candidate, or its leading groups
+when a short token such as a CVV or expiry follows the card (``_card_part``). :func:`redact` and
+:func:`rule_matches` both resolve candidates through one table (``_CONFIRM``), so there is a
+single definition of "a card number". A caller that runs the bare pattern
+(``compile_rule("card_number")[1].search(...)``) sees candidates only; use :func:`rule_matches`
+for the judge-facing answer.
 """
 
 import re
@@ -79,9 +81,28 @@ def _luhn_valid(candidate: str) -> bool:
     return total % 10 == 0
 
 
-# Library patterns whose regex only finds candidates; the check decides. The one place that says
-# which patterns need a second step, shared by redact() and rule_matches().
-_CONFIRM: dict[str, Callable[[str], bool]] = {"card_number": _luhn_valid}
+def _card_part(candidate: str) -> str | None:
+    """The card number inside a card-shaped candidate, or None if there is none.
+
+    The whole candidate if it passes Luhn; otherwise its longest leading run of whole groups
+    (cut at a space or dash) that is still 13 or more digits and passes Luhn. That keeps the
+    card when a short token follows it ("4111 1111 1111 1111 123": a CVV, "... 12/26": an
+    expiry) and the candidate as a whole fails the checksum.
+    """
+    cuts = [len(candidate)] + [i for i in range(len(candidate) - 1, 0, -1) if candidate[i] in " -"]
+    for end in cuts:
+        part = candidate[:end]
+        if sum(c.isdecimal() for c in part) < 13:
+            return None
+        if _luhn_valid(part):
+            return part
+    return None
+
+
+# Library patterns whose regex only finds candidates; a resolver decides. It returns the leading
+# part of a candidate that really is the thing (the whole candidate or less), or None. The one
+# place that says which patterns need a second step, shared by redact() and rule_matches().
+_CONFIRM: dict[str, Callable[[str], str | None]] = {"card_number": _card_part}
 
 RAW_PREFIX = "re:"
 
@@ -113,14 +134,14 @@ def compile_rule(rule: str) -> tuple[str, re.Pattern[str]]:
 def rule_matches(name: str, pattern: re.Pattern[str], text: str) -> bool:
     """True if the compiled rule ``(name, pattern)`` from :func:`compile_rule` matches ``text``.
 
-    A plain search, except that a library pattern with a confirming check (``card_number`` and
-    its Luhn checksum) counts only the matches that pass it. The judge uses this for
+    A plain search, except that a library pattern with a confirming resolver (``card_number``
+    and its Luhn checksum) counts only the matches the resolver accepts. The judge uses this for
     ``must_not_match``.
     """
     confirm = _CONFIRM.get(name)
     if confirm is None:
         return pattern.search(text) is not None
-    return any(confirm(match.group()) for match in pattern.finditer(text))
+    return any(confirm(match.group()) is not None for match in pattern.finditer(text))
 
 
 REDACT_NAMES = ("email_address", "phone_number", "card_number")
@@ -132,14 +153,22 @@ _REDACT_ORDER = tuple(sorted(REDACT_NAMES, key=lambda name: name == "phone_numbe
 
 
 def _replacer(name: str) -> Callable[[re.Match[str]], str]:
-    """A ``re.sub`` callback that redacts a match, or keeps it if its confirming check fails."""
+    """A ``re.sub`` callback that redacts a match.
+
+    With a confirming resolver, only the part it accepts is redacted (the rest of the match is
+    kept), and a match it rejects is kept whole.
+    """
     confirm = _CONFIRM.get(name)
     placeholder = f"[REDACTED:{name}]"
 
     def replace(match: re.Match[str]) -> str:
-        if confirm is None or confirm(match.group()):
+        text = match.group()
+        if confirm is None:
             return placeholder
-        return match.group()
+        part = confirm(text)
+        if part is None:
+            return text
+        return placeholder + text[len(part) :]
 
     return replace
 

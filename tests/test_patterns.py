@@ -100,6 +100,43 @@ def test_redact_leaves_card_shaped_numbers_that_fail_the_luhn_check(number):
     assert redact(f"card {number} ok") == f"card {number} ok"
 
 
+# --- Fix round 2: a card followed by a short token (CVV, expiry) keeps its Luhn-valid core ----
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("card 4111 1111 1111 1111 123 ok", "card [REDACTED:card_number] 123 ok"),
+        ("card 4111 1111 1111 1111 12/26 ok", "card [REDACTED:card_number] 12/26 ok"),
+        ("card 4111-1111-1111-1111 1 ok", "card [REDACTED:card_number] 1 ok"),
+    ],
+)
+def test_redact_keeps_the_card_core_when_a_trailing_group_fails_luhn(text, expected):
+    assert redact(text) == expected
+
+
+def test_redact_card_core_for_every_possible_three_digit_token():
+    # Whether or not the 19-digit whole happens to pass Luhn, the card itself must go.
+    for tail in range(1000):
+        out = redact(f"card 4111 1111 1111 1111 {tail:03d} ok")
+        assert out.startswith("card [REDACTED:card_number]"), out
+        assert out.endswith(" ok") and "4111" not in out, out
+
+
+def test_redact_keeps_a_luhn_valid_19_digit_card_as_one_unit():
+    # 4111 1111 1111 1111 003 passes Luhn as a whole, and so does its 16-digit core: the longer
+    # unit wins, so no digits of the card are left behind.
+    assert redact("card 4111 1111 1111 1111 003 ok") == "card [REDACTED:card_number] ok"
+    assert redact("card 4111-1111-1111-1111-003.") == "card [REDACTED:card_number]."
+
+
+def test_rule_matches_sees_the_card_core_before_a_trailing_group():
+    name, rx = compile_rule("card_number")
+    assert rule_matches(name, rx, "card 4111 1111 1111 1111 123 ok")
+    assert rule_matches(name, rx, "card 4111 1111 1111 1111 12/26 ok")
+    assert not rule_matches(name, rx, "ref 4111 1111 1111 1112 123 ok")
+
+
 # --- Fix round 1, Important 2: no quadratic backtracking on long text -------------------------
 
 

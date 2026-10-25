@@ -1,9 +1,10 @@
 import csv
+import json
 from pathlib import Path
 
 import pytest
 
-from suite.evidence import EvidenceStore
+from suite.evidence import EvidenceStore, read_run_json, write_run_json
 from suite.models import (
     Attempt,
     ConfigError,
@@ -251,6 +252,46 @@ def test_md_cell_never_cuts_an_escape_in_half() -> None:
     assert md_cell("|" * 300, limit=5) == "\\|\\|…"
 
 
+@pytest.mark.parametrize("char", list("\\`*_[]()!#~|"))
+def test_md_cell_backslash_escapes_markdown_metacharacters(char: str) -> None:
+    assert md_cell(f"a{char}b") == f"a\\{char}b"
+
+
+def test_md_cell_escapes_every_metacharacter_in_one_string() -> None:
+    assert md_cell("\\`*_[]()!#~|<>") == "\\\\\\`\\*\\_\\[\\]\\(\\)\\!\\#\\~\\|&lt;&gt;"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("http://e.example", "http[:]//e.example"),
+        ("https://e.example/a?b=1", "https[:]//e.example/a?b=1"),
+        ("HTTPS://E.EXAMPLE", "HTTPS[:]//E.EXAMPLE"),
+        ("Http://e", "Http[:]//e"),
+        ("www.e.example", "www[.]e.example"),
+        ("WWW.e.example", "WWW[.]e.example"),
+        ("see https://a.example and www.b.example", "see https[:]//a.example and www[.]b.example"),
+        ("not a url: http, www, https:", "not a url: http, www, https:"),
+    ],
+)
+def test_md_cell_defangs_bare_urls(text: str, expected: str) -> None:
+    assert md_cell(text) == expected
+
+
+def test_md_cell_renders_image_and_link_syntax_inert() -> None:
+    cell = md_cell("![x](https://e.example/a.png) [y](https://e.example)")
+    assert cell == ("\\!\\[x\\]\\(https[:]//e.example/a.png\\) \\[y\\]\\(https[:]//e.example\\)")
+    assert "![" not in cell and "](" not in cell and "https://" not in cell
+
+
+def test_md_cell_truncation_counts_escaped_length_and_keeps_escapes_whole() -> None:
+    assert md_cell("*" * 300, limit=5) == "\\*\\*…"  # two escapes fit (4); a third would make 6
+    # "https[:]//" is one unit of 10 characters: it is dropped whole, never cut part-way.
+    assert md_cell("ab" + "https://e", limit=11) == "ab…"
+    assert md_cell("ab" + "https://e", limit=12) == "abhttps[:]//…"
+    assert md_cell("www.e.example", limit=5) == "…"
+
+
 # --- HTML --------------------------------------------------------------------------------------
 
 
@@ -388,6 +429,35 @@ def test_markdown_table_cells_cannot_break_the_table(tmp_path: Path) -> None:
     assert "a\\|b c" in row
 
 
+def test_markdown_replies_cannot_become_links_images_or_autolinks(tmp_path: Path) -> None:
+    reply = "![x](https://e.example/a.png) [y](https://e.example) `code` *b* www.e.example"
+    d = make_run_dir(tmp_path, [("P1#1", "LLM05", Verdict.FAIL, reply)])
+    store = EvidenceStore(d / "evidence.db")
+    try:
+        store._conn.execute(
+            "UPDATE attempts SET reasons_json = ?",
+            (json.dumps(["see [z](https://e.example/r) and ![i](http://e.example/i.png) `x`"]),),
+        )
+        store._conn.commit()
+    finally:
+        store.close()
+    run = read_run_json(d)
+    run["endpoint"]["name"] = "[ep](https://e.example/ep) ![e](https://e.example/e.png)"
+    write_run_json(d, run)
+
+    write_reports(d, final=False)
+    md = (d / "report.md").read_text(encoding="utf-8")
+    assert "![" not in md  # no live image
+    assert "](" not in md  # no live link
+    assert "http://" not in md and "https://" not in md and "www." not in md.lower()
+    assert "`" not in md.replace("\\`", "")  # no live code span
+    # the text is still all there, readable once rendered
+    assert "\\!\\[x\\]\\(https[:]//e.example/a.png\\)" in md
+    assert "\\`code\\` \\*b\\* www[.]e.example" in md
+    assert "see \\[z\\]\\(https[:]//e.example/r\\)" in md  # the reasons cell
+    assert "\\[ep\\]\\(https[:]//e.example/ep\\)" in md  # the run facts
+
+
 # --- CSV ---------------------------------------------------------------------------------------
 
 
@@ -397,6 +467,45 @@ def test_csv_cells_neutralised(tmp_path: Path) -> None:
     (row,) = read_dicts(d / "matrix.csv")
     assert row["reply_excerpt"] == "'=HYPERLINK(1)"
     assert csv_cell("-5") == "'-5" and csv_cell("ok") == "ok"
+
+
+@pytest.mark.parametrize("value", ["=1+1", "+cmd", "-2", "@SUM(A1)"])
+def test_every_csv_text_cell_is_neutralised(tmp_path: Path, value: str) -> None:
+    """A formula-leading value in any text field is defused in matrix.csv and review.csv."""
+    d = make_run_dir(
+        tmp_path,
+        [("P1#1", "LLM01", Verdict.NEEDS_REVIEW, value)],
+        hints={"P1#1": value},
+    )
+    # Fields the normal paths cannot fill with such a value (ids, category, error kind, reasons),
+    # as a hand-edited or hostile evidence.db could: the report must still defuse them.
+    attempt_id, prompt_id = value + "#1", value
+    store = EvidenceStore(d / "evidence.db")
+    try:
+        conn = store._conn
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "UPDATE prompts SET prompt_id = ?, category = ?, prompt_text = ?, pass_if = ?",
+            (prompt_id, value, value, value),
+        )
+        conn.execute(
+            "UPDATE attempts SET attempt_id = ?, prompt_id = ?, error_kind = ?, reasons_json = ?",
+            (attempt_id, prompt_id, value, json.dumps([value])),
+        )
+        conn.commit()
+    finally:
+        store.close()
+    write_reports(d, final=False)
+
+    expected = "'" + value
+    (matrix,) = read_dicts(d / "matrix.csv")
+    for column in ("prompt_id", "category", "reasons", "hint", "error_kind", "reply_excerpt"):
+        assert matrix[column] == expected, f"matrix.csv {column}"
+    assert matrix["attempt_id"] == "'" + attempt_id
+    (review,) = read_dicts(d / "review.csv")
+    for column in ("prompt_id", "category", "hint", "pass_if", "prompt", "reply"):
+        assert review[column] == expected, f"review.csv {column}"
+    assert review["attempt_id"] == "'" + attempt_id
 
 
 def test_matrix_csv_columns_and_rows(tmp_path: Path) -> None:

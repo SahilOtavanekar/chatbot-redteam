@@ -17,8 +17,9 @@ Three rules shape the output:
 """
 
 import csv
+import re
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -86,21 +87,48 @@ def csv_cell(text: str) -> str:
     return "'" + text if text.startswith(FORMULA_PREFIXES) else text
 
 
-_MD_ESCAPES = {"|": "\\|", "<": "&lt;", ">": "&gt;"}
+# Markdown syntax a reply could use to fetch or link something: backslash-escaped, so a previewer
+# shows the characters instead of acting on them. ``<`` and ``>`` become entities (no tags).
+# Bare URLs are defanged (``https[:]//``, ``www[.]``) because previewers autolink them, and an
+# autolink to an attacker's address is a click (or, for an image, a silent fetch) away.
+_MD_ENTITIES = {"<": "&lt;", ">": "&gt;"}
+_MD_TOKEN = re.compile(r"(https?)://|www\.|[\\`*_\[\]()!#~|<>]", re.IGNORECASE)
+
+
+def _md_unit(match: re.Match[str]) -> str:
+    """The inert text for one Markdown-significant token."""
+    token = match.group()
+    if match.group(1):  # http:// or https://
+        return f"{match.group(1)}[:]//"
+    if token.lower() == "www.":
+        return f"{token[:3]}[.]"
+    return _MD_ENTITIES.get(token) or "\\" + token
+
+
+def _md_units(text: str) -> Iterator[str]:
+    """``text`` as inert units: each plain character, and each token's escape as one whole unit."""
+    position = 0
+    for match in _MD_TOKEN.finditer(text):
+        yield from text[position : match.start()]
+        yield _md_unit(match)
+        position = match.end()
+    yield from text[position:]
 
 
 def md_cell(text: str, limit: int = 200) -> str:
-    """Make ``text`` safe inside one Markdown table cell, at most ``limit`` characters long.
+    r"""Make untrusted ``text`` inert inside one Markdown table cell, at most ``limit`` long.
 
-    Newlines become spaces, ``|`` becomes ``\\|``, and ``<`` and ``>`` become entities so the
-    text can never open a tag. If the result is longer than ``limit`` it is cut and ``…`` is
-    added; the cut falls between characters, never inside an escape such as ``&lt;``.
+    Newlines become spaces. ``|``, ``\``, backtick, ``*``, ``_``, ``[``, ``]``, ``(``, ``)``,
+    ``!``, ``#`` and ``~`` are backslash-escaped, ``<`` and ``>`` become entities, and
+    ``http://``, ``https://`` and ``www.`` are defanged (``http[:]//``, ``www[.]``), so a reply
+    cannot render as a link, an image (which a previewer would fetch), a code span, a tag or an
+    autolink. If the result is longer than ``limit`` (escapes count) it is cut and ``…`` is
+    added; the cut falls between units, never inside an escape such as ``\*`` or ``&lt;``.
     """
     flat = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     pieces: list[str] = []
     length = 0
-    for char in flat:
-        piece = _MD_ESCAPES.get(char, char)
+    for piece in _md_units(flat):
         if length + len(piece) > limit:
             return "".join(pieces) + "…"
         pieces.append(piece)

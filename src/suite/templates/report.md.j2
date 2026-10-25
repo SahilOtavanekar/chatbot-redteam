@@ -37,7 +37,7 @@ No prompts were recorded for this run.
 |---|---|---|---:|---|---|
 {% for p in data.prompts %}
 {% set shown = p.attempts | selectattr("verdict", "equalto", p.verdict) | first %}
-| {{ p.prompt_id | md_cell }} | {{ p.category | md_cell }} | {{ p.verdict | verdict_label(p.attempts | map(attribute="decided_by")) }} | {{ p.attempts | length }} | {{ shown.reasons | join("; ") | md_cell }} | {{ ("(no reply)" if shown.reply is none else shown.reply) | md_cell }} |
+| {{ p.prompt_id | md_cell }} | {{ p.category | md_cell }} | {{ p.verdict | verdict_label(p.attempts | map(attribute="decided_by")) }} | {{ p.attempts | length }} | {{ shown.reasons | join("; ") | md_cell }} | {{ "(no reply)" if shown.reply is none else shown.reply | md_cell }} |
 {% endfor %}
 
 "Why" and "Reply (excerpt)" come from the attempt that set the prompt's verdict (the first one, if several). Full replies are in report.html and matrix.csv.

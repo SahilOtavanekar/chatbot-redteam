@@ -5,22 +5,24 @@ chatbot API **in parallel**, judges each reply deterministically, queues the res
 review, and generates an OWASP-aligned report. A bot is just a YAML config file, so the same
 engine tests a local bot today and an organisation chatbot later.
 
-**Status (paused 2026-10-23): v0.1 build in progress on branch `feat/v0.1` — Tasks 1–2 done
-and reviewed; Task 3 built, review found 2 Important issues, fix round 1 NOT yet started.**
+**Status (paused 2026-10-25): v0.1 build in progress on branch `feat/v0.1` — Tasks 1–14 done
+and reviewed (599 tests passing at dc9e212); Task 15 (CLI) implementer was still running at the
+pause — its review has NOT started.**
 Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
 (see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
 
 ## How to resume the build (next session)
 
 1. `git switch feat/v0.1` (should already be checked out); `uv sync`; `uv run pytest -q` → expect
-   112 passed on Python 3.13 (`.python-version` pins it).
+   599+ passed on Python 3.13 (`.python-version` pins it; more if Task 15's commit landed).
 2. The build runs with **superpowers:subagent-driven-development** (Sahil's choice). Its ledger is
    `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/progress.md` — **git-ignored, local only**.
    Read it first: it has every ruling, deferred minor, and a `RESUME HERE` line. Trust the ledger
    + `git log` over memory; never re-dispatch a task marked `complete`.
-3. Next action: Task 3 fix round 1 using `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/task-3-findings-round1.md`
-   (FIX_BASE `ebd8673`), then a scoped re-review, then Task 4. Run Tasks 4–16 without pausing;
-   stop before Tasks 17–18 — they need prompt text from Sahil.
+3. Next action: check `git log` for a Task 15 commit after `dc9e212` (and `task-15-report.md` in
+   the ledger folder). If present → review it (package `dc9e212..HEAD`); if absent or the tree is
+   dirty → inspect, then re-dispatch Task 15. Then Task 16 (mock validation). Stop before Tasks
+   17–18 — they need prompt text from Sahil. Then the final whole-branch review.
 4. Sahil may first want to review progress; summarise from the ledger, don't re-run tasks.
 
 This project was split out of the `ai-red-teaming` lab (at `C:\dev\ai-red-teaming`). The lab's
@@ -56,8 +58,8 @@ deliberately vulnerable bot is this framework's first owned test target.
 ## Layout (✔ = built so far; full map in the plan's "File map")
 
 ```
-src/suite/   ✔ models, ✔ config, ✔ prompts, ✔ patterns · planner, extract, engine, judge,
-             adapters/ (only PyRIT importer), evidence, report, run, review, compare, cli
+src/suite/   ✔ models, config, prompts, patterns, planner, extract, engine, judge,
+             adapters/ (only PyRIT importer), evidence, report, run, review, compare · cli (Task 15)
 endpoints/   one YAML per bot (mock, lab-bot, gandalf-*); private/ subdir git-ignored (Task 15)
 prompts/     prompt packs (YAML/CSV); Sahil authors the text; private/ subdir git-ignored (Task 15)
 results/     git-ignored run folders (run.json, evidence.db, matrix.csv, report.*, review.csv)
@@ -84,4 +86,4 @@ uv run suite compare  --baseline results/<r1> --run results/<r2>
 
 ## Next step
 
-Resume the subagent-driven build at Task 3 fix round 1 (see "How to resume" above).
+Resume the subagent-driven build at Task 15's review (see "How to resume" above).

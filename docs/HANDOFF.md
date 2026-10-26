@@ -21,17 +21,18 @@ owned test target.
 - **Plan approved; execution = subagent-driven** (fresh implementer + reviewer per task):
   `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md` (18 tasks, TDD). Sahil also approved
   git-ignored `endpoints/private/` + `prompts/private/` (added to Task 15).
-- **Build paused 2026-10-23 at Sahil's request, on branch `feat/v0.1`** (git initialised; `main`
-  holds only the planning docs):
-  | Task | State | Commits |
-  |---|---|---|
-  | 1 Scaffold, shared types, PyRIT boundary test | complete, review clean | ab54a0a |
-  | 2 Endpoint config (+ fix: secrets masked everywhere, bad `${...}` rejected) | complete, review clean | 32ac2a9, 4645e42 |
-  | 3 Prompt packs + pattern library | built; review = **needs fixes** (2 Important) | ebd8673 |
-  Test suite: 112 passed on Python 3.13 (Executed by the Task 3 implementer). Task 3's open
-  findings: the card-number redaction regex destroys run ids/dates (spec N4), and the email regex
-  is quadratic on very long replies — exact findings + rulings in
-  `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/task-3-findings-round1.md`.
+- **Build paused 2026-10-25 at Sahil's request, on branch `feat/v0.1`** (`main` holds only the
+  planning docs). **Tasks 1–14 complete and reviewed** (scaffold, config, prompt packs + patterns,
+  planner, extractor, engine, HTTP adapter + mock + N1 benchmark, judge, PyRIT detectors + Gandalf,
+  evidence store, reports, run orchestration, finalize, compare). 599 tests passing at `dc9e212`
+  (Executed by the Task 14 implementer). N1 benchmark Executed: 100 prompts @50 concurrency with a
+  1 s mock → ~2.7 s, peak 50 (spike: PyRIT AttackExecutor 17.5 s, plain httpx 3.1 s).
+  **Task 15 (CLI + shipped files) was dispatched and still running at the pause; not reviewed.**
+- **Open items for Sahil:** (1) prompt text for Tasks 17 (lab bot) and 18 (Gandalf); (2) Gandalf's
+  API (`gandalf-api.lakera.ai/api/send-message`) returned **503** on 2026-10-25 (Executed probe) —
+  re-check before Task 18; (3) before org-bot runs: should a guardrail's HTTP 400 "blocked" reply
+  (e.g. Azure content filter) count as a refusal instead of Inconclusive?; (4) commit trailers are
+  mixed (Opus/Sonnet) — tidy at merge if wanted; (5) GitHub remote + PR at the end.
 - The SDD **ledger** `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/progress.md` (git-ignored,
   this machine only) holds every ruling and deferred minor finding. Read it before resuming.
 - A **PyRIT 1.1.0 spike was run** (Executed, throwaway) and proved the core approach. Findings and
@@ -72,9 +73,10 @@ subset (baseline, gpt-is-password-encoded, gandalf-the-white).
 ## Next step (the gate)
 
 1. Sahil reviews progress (ledger + `git log feat/v0.1`); answer from the ledger, don't re-run tasks.
-2. Resume superpowers:subagent-driven-development: Task 3 fix round 1 (FIX_BASE `ebd8673`) →
-   scoped re-review → Tasks 4–16 without pausing → stop before 17–18 (need Sahil's prompt text) →
-   final whole-branch review → finishing-a-development-branch (ask before creating a GitHub remote).
+2. Resume superpowers:subagent-driven-development at Task 15: if its commit landed after `dc9e212`,
+   review it; otherwise re-dispatch it. Then Task 16 (mock validation) → stop for Sahil's prompt text
+   (Tasks 17–18) → final whole-branch review → finishing-a-development-branch (ask before creating
+   a GitHub remote).
 
 ## Environment notes
 

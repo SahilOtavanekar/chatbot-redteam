@@ -75,6 +75,16 @@ def test_a_dataset_that_is_not_a_mapping_raises(tmp_path):
         load_garak_dataset("list", base_dir=tmp_path)
 
 
+@pytest.mark.parametrize("body", ["seeds: 5\n", "seeds:\n  - value: Hello.\nharm_categories: 5\n"])
+def test_a_wrongly_typed_field_is_a_configerror_not_a_traceback(tmp_path, body):
+    # pydantic/PyRIT can raise a bare TypeError for a field of the wrong shape: that must still
+    # surface as the clean ConfigError (exit 2 at the CLI), naming the file and the type only.
+    (tmp_path / "typed.prompt").write_text(body, encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"typed\.prompt") as caught:
+        load_garak_dataset("typed", base_dir=tmp_path)
+    assert "TypeError" in str(caught.value)
+
+
 def test_real_garak_dir_is_resolvable(pyrit_ready):
     assert (GARAK_DIR / "system_prompt_extraction.prompt").is_file()
 

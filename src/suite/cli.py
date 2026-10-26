@@ -236,10 +236,9 @@ def _cmd_import(args: argparse.Namespace) -> int:
         # The importer lets a mkdir/write failure through raw; a path the user can fix is a
         # clean exit 2, not an unexpected exit 1. The class name only: the message repeats paths.
         raise ConfigError(f"cannot write to {args.out}: {type(err).__name__}") from err
-    print(
-        f"imported {result.prompt_count} prompts across {len(result.categories)} categories "
-        f"→ {result.out_dir}"
-    )
+    count = len(result.categories)
+    noun = "category" if count == 1 else "categories"
+    print(f"imported {result.prompt_count} prompts across {count} {noun} → {result.out_dir}")
     return EXIT_OK
 
 

@@ -39,7 +39,7 @@ def load_garak_dataset(name: str, *, base_dir: Path = GARAK_DIR) -> list[Dataset
         raise ConfigError(f"garak dataset {name!r} not found: no file {path}")
     try:
         dataset = SeedDataset.from_yaml_file(path)
-    except (OSError, ValueError) as exc:  # pydantic's ValidationError is a ValueError
+    except (OSError, ValueError, TypeError) as exc:  # pydantic's ValidationError is a ValueError
         raise ConfigError(
             f"cannot load garak dataset {path}: not a valid, non-empty prompt file "
             f"({type(exc).__name__})"

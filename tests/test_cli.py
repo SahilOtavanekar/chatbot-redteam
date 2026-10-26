@@ -523,17 +523,39 @@ def test_import_garak_writes_baseline(tmp_path, capsys):
     assert code == 0, captured.err
     assert captured.err == ""
     assert re.fullmatch(
-        rf"imported \d+ prompts across \d+ categories → {re.escape(str(out_dir))}\n",
+        rf"imported \d+ prompts across \d+ categor(?:y|ies) → {re.escape(str(out_dir))}\n",
         captured.out,
     )
     assert (out_dir / "LLM07.yaml").is_file()
     assert (out_dir / "COVERAGE.md").is_file()
     pack = load_pack(out_dir)  # the folder is an ordinary pack
-    count, categories = re.fullmatch(
-        r"imported (\d+) prompts across (\d+) categories .*\n", captured.out
+    count, categories, noun = re.fullmatch(
+        r"imported (\d+) prompts across (\d+) (categor(?:y|ies)) .*\n", captured.out
     ).groups()
     assert len(pack.prompts) == int(count)
     assert len({p.category for p in pack.prompts}) == int(categories)
+    assert noun == ("category" if categories == "1" else "categories")  # Phase 1 has one
+
+
+@pytest.mark.parametrize(
+    ("categories", "phrase"),
+    [(["LLM07"], "across 1 category "), (["LLM07", "LLM09"], "across 2 categories ")],
+)
+def test_import_summary_noun_agrees_with_the_category_count(
+    tmp_path, monkeypatch, capsys, categories, phrase
+):
+    from suite import importer
+
+    def fake_import(source, out, *, canary, repeat):
+        return importer.ImportResult(
+            out_dir=out, files=[], prompt_count=5, categories=list(categories)
+        )
+
+    monkeypatch.setattr(importer, "import_source", fake_import)
+    code = main(["import", "--source", "garak", "--out", str(tmp_path / "b")])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out == f"imported 5 prompts {phrase}→ {tmp_path / 'b'}\n"
 
 
 def test_import_defaults_to_prompts_baseline_and_repeat_one():

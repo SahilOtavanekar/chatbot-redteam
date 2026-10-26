@@ -60,6 +60,27 @@ uv run suite compare  --baseline results/<run-1> --run results/<run-2>      # fi
 - A run that **aborts** (too many consecutive errors, `abort_after_errors`) still exits 0, with a
   `warning:` line on stderr; its unsent attempts show as Inconclusive in the report, never as Pass.
 
+### OWASP baseline import (v0.2, Phase 1)
+
+`suite import` builds a baseline prompt pack from garak's probe prompts (loaded through PyRIT, so
+no network is needed) instead of you writing a pack by hand. Phase 1 imports garak's
+`system_prompt_extraction` set, filed under OWASP **LLM07** (System Prompt Leakage):
+
+```bash
+uv run suite import --source garak --out prompts/baseline --canary SYSTEM-CANARY-7Q4P
+uv run suite validate --endpoint endpoints/lab-bot.yaml --pack prompts/baseline
+uv run suite run      --endpoint endpoints/lab-bot.yaml --pack prompts/baseline
+```
+
+- `--canary` is the marker your bot must never reveal; it becomes a fixed must-not-contain check on
+  the prompts that ask for it. Prompts with no rule route to human review, never to Pass.
+- Output is `prompts/baseline/LLM07.yaml` plus `prompts/baseline/COVERAGE.md`, which lists which
+  OWASP LLM categories the baseline covers and which it does not. The folder is **git-ignored**
+  (regenerate it, don't edit it); the same inputs produce byte-identical files.
+- `--pack` is repeatable, so a baseline composes with your own prompts (prompt ids must differ):
+  `--pack prompts/baseline --pack prompts/private/my-bot`.
+- Validation record: [`docs/validation/v0.2-importer.md`](docs/validation/v0.2-importer.md).
+
 ### Private org-bot files
 
 Endpoint files and prompt packs for an organisation's chatbot may hold internal names, URLs or
@@ -72,6 +93,7 @@ refuses without it.
 
 - [`docs/HANDOFF.md`](docs/HANDOFF.md) — resume point: state, decisions, next step.
 - [`docs/specs/2026-10-23-v0.1-design.md`](docs/specs/2026-10-23-v0.1-design.md) — v0.1 design spec.
+- [`docs/specs/2026-10-26-v0.2-importer-design.md`](docs/specs/2026-10-26-v0.2-importer-design.md) — v0.2 importer design spec (Phase 1 built).
 - [`docs/pyrit-analysis.md`](docs/pyrit-analysis.md) — detailed PyRIT 1.1.0 analysis (incl. its GUI).
 - [`docs/pyrit-spike-findings.md`](docs/pyrit-spike-findings.md) — verified PyRIT patterns + pitfalls.
 

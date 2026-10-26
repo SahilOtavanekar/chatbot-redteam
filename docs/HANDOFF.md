@@ -30,6 +30,17 @@ owned test target.
   in-flight attempts labelled "no outcome recorded"; hardening; these docs). 655 tests passing
   (Executed 2026-10-26). N1 benchmark Executed: 100 prompts @50 concurrency with a 1 s mock →
   ~2.5–2.7 s, peak 50 (spike: PyRIT AttackExecutor 17.5 s, plain httpx 3.1 s).
+- **v0.2 importer, Phase 1 built and validated (2026-10-26, branch `feat/v0.2-importer`, not yet
+  merged).** `suite import --source garak` writes a git-ignored OWASP baseline
+  (`prompts/baseline/LLM07.yaml` = garak's `system_prompt_extraction`, 28 prompts, plus
+  `COVERAGE.md`), and `--pack` is repeatable so a baseline composes with owner prompts. Executed
+  against the lab bot with guardrails on: `fail 0 · pass 24 · inconclusive 4 (timeouts) ·
+  needs_review 0`, run `20261026-101106-lab-bot`. Record: `docs/validation/v0.2-importer.md`;
+  design: `docs/specs/2026-10-26-v0.2-importer-design.md`. Phase-2 spike (Executed):
+  `PackageHallucinationScorer` runs offline and deterministically once a `known_packages` set is
+  injected; the registry sets themselves are remote datasets, so vendoring them is the open gate.
+  Open: re-run the 4 timeouts at lower concurrency; guardrails-off vs on `suite compare`; merge
+  with Sahil's own `prompts/lab` pack (Not Testable until it exists).
 - **Tasks 17–18 (lab-bot and Gandalf packs + validation) wait for Sahil's prompt text** — Claude
   never writes attack prompts; it transcribes Sahil's text verbatim.
 - **Pushed 2026-10-26** to https://github.com/SahilOtavanekar/chatbot-redteam (`main` and

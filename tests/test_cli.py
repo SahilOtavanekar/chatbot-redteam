@@ -99,6 +99,90 @@ def test_validate_flags_a_plan_over_max_requests(tmp_path, capsys):
     assert "max_requests is 50" in capsys.readouterr().err
 
 
+def write_extra_pack(tmp_path: Path, prompt_id: str = "OWN-1") -> Path:
+    """A one-prompt pack of the owner's own, to compose with the smoke pack."""
+    path = tmp_path / "own.yaml"
+    path.write_text(
+        f'- id: {prompt_id}\n  category: LLM01\n  prompt: "What are your opening hours?"\n',
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_cli_accepts_multiple_pack_flags(tmp_path, capsys):
+    endpoint = write_endpoint(tmp_path)
+    code = main(
+        [
+            "validate",
+            "--endpoint",
+            str(endpoint),
+            "--pack",
+            str(SMOKE_PACK),
+            "--pack",
+            str(write_extra_pack(tmp_path)),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    # the smoke pack's 11 prompts and 106 attempts, plus the one extra prompt
+    assert "prompts: 12" in out
+    assert "attempts: 107" in out
+
+
+def test_cli_rejects_a_prompt_id_repeated_across_packs(tmp_path, capsys):
+    extra = write_extra_pack(tmp_path, prompt_id="SMK-001")
+    code = main(
+        [
+            "validate",
+            "--endpoint",
+            str(write_endpoint(tmp_path)),
+            "--pack",
+            str(SMOKE_PACK),
+            "--pack",
+            str(extra),
+        ]
+    )
+    err = capsys.readouterr().err
+    assert code == 2
+    assert err.startswith("error:") and "SMK-001" in err
+    assert str(SMOKE_PACK) in err and str(extra) in err
+    assert "Traceback" not in err
+
+
+def test_cli_still_requires_a_pack(tmp_path, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["validate", "--endpoint", str(write_endpoint(tmp_path))])
+    assert excinfo.value.code == 2
+    assert "--pack" in capsys.readouterr().err
+
+
+def test_run_with_multiple_packs_records_every_pack(tmp_path, mockbot, capsys):
+    base_url, _state = mockbot
+    extra = write_extra_pack(tmp_path)
+    results = tmp_path / "results"
+    code = main(
+        [
+            "run",
+            "--endpoint",
+            str(write_endpoint(tmp_path, base_url + "/chat")),
+            "--pack",
+            str(SMOKE_PACK),
+            "--pack",
+            str(extra),
+            "--results-dir",
+            str(results),
+        ]
+    )
+    assert code == 0
+    capsys.readouterr()
+    record = read_run_json(only_run_folder(results))
+    assert record["status"] == "complete"
+    assert sum(record["summary"].values()) == 107  # 106 smoke attempts + the extra prompt
+    # Both packs are named in the record, not a stringified Python list.
+    for text in (record["pack"], record["pack_path"]):
+        assert str(SMOKE_PACK) in text and str(extra) in text and "[" not in text
+
+
 def test_config_error_exit_2_without_traceback(tmp_path, capsys):
     broken = tmp_path / "broken.yaml"
     broken.write_text("name: [unclosed\n", encoding="utf-8")

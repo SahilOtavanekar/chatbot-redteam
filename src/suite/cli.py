@@ -22,7 +22,7 @@ from suite.engine import RateLimiter
 from suite.evidence import read_run_json
 from suite.models import ConfigError, Verdict
 from suite.planner import PreflightReport, format_preflight, preflight
-from suite.prompts import Pack, load_pack
+from suite.prompts import Pack, load_packs
 from suite.review import finalize
 from suite.run import execute_run
 
@@ -107,13 +107,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _add_endpoint_and_pack(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--endpoint", type=Path, required=True, help="endpoint YAML file")
-    parser.add_argument("--pack", type=Path, required=True, help="prompt pack folder or file")
+    parser.add_argument(
+        "--pack",
+        type=Path,
+        action="append",
+        required=True,
+        help="prompt pack folder or file; repeat to merge several packs (prompt ids must differ)",
+    )
 
 
 def _plan(args: argparse.Namespace) -> tuple[EndpointSpec, Pack, PreflightReport]:
-    """Load the endpoint and pack, and print the preflight report (stdout)."""
+    """Load the endpoint and pack(s), and print the preflight report (stdout)."""
     spec = load_endpoint(args.endpoint)
-    pack = load_pack(args.pack)
+    pack = load_packs(args.pack)
     report = preflight(spec, pack)
     print(format_preflight(report, spec))
     return spec, pack, report
@@ -136,8 +142,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not report.ok:
         return _refuse(report)
 
+    # run.json records one pack_path; several packs are joined with "+" like the merged pack's name.
+    pack_path = args.pack[0] if len(args.pack) == 1 else Path("+".join(map(str, args.pack)))
     try:
-        run_dir = asyncio.run(_run(spec, pack, args.pack, args.results_dir))
+        run_dir = asyncio.run(_run(spec, pack, pack_path, args.results_dir))
     except (KeyboardInterrupt, ConfigError):
         raise  # main prints these
     except Exception as exc:

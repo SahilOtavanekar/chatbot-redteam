@@ -5,8 +5,9 @@ A framework that runs a predefined suite of security test prompts against any ch
 and produces an OWASP-aligned report. A bot is described by one YAML file, so the same engine
 tests a local bot today and an organisation chatbot later.
 
-> **Status: v0.1 in progress.** Start at [`docs/HANDOFF.md`](docs/HANDOFF.md),
-> then [`CLAUDE.md`](CLAUDE.md) and the spec at
+> **Status: v0.1 built and validated on a mock**
+> ([`docs/validation/v0.1-mock.md`](docs/validation/v0.1-mock.md)); lab-bot and Gandalf validation
+> pending. Start at [`docs/HANDOFF.md`](docs/HANDOFF.md), then [`CLAUDE.md`](CLAUDE.md) and the spec at
 > [`docs/specs/2026-10-23-v0.1-design.md`](docs/specs/2026-10-23-v0.1-design.md).
 
 ## Why
@@ -16,7 +17,7 @@ get a report with Pass / Fail / Inconclusive per prompt and per OWASP LLM catego
 New prompts are added as files, no code change. Built so testing an organisation's own chatbots
 later is a config change, not a rewrite.
 
-## How it will work (v0.1)
+## How it works (v0.1)
 
 ```
 endpoint YAML + prompt packs → validate (dry run) → run in parallel (capped)
@@ -25,9 +26,13 @@ endpoint YAML + prompt packs → validate (dry run) → run in parallel (capped)
 ```
 
 - **Own thin async engine**; PyRIT 1.1.0 used as a library for specific pieces (HTTP & Gandalf
-  targets, encoding converters, rule-based scorers, evidence store) behind one adapter.
+  targets, a JSON-escaping converter, regex-based output detectors) behind one adapter package.
+- **Our own evidence store**, `evidence.db` (SQLite, one per run), not PyRIT's memory: reports,
+  review and compare read only our files (spec §16.2).
 - **Deterministic judging only.** Inconclusive (errors/timeouts/empty replies) is never a Pass.
-- Validated against a mock server, the `ai-red-teaming` lab bot, and Gandalf.
+- Validated against a mock server ([`docs/validation/v0.1-mock.md`](docs/validation/v0.1-mock.md)).
+  Validation against the `ai-red-teaming` lab bot and Gandalf is pending (it needs Sahil's prompt
+  text).
 
 ## Quickstart
 
@@ -42,6 +47,7 @@ uv run suite finalize --run results/<run-id>                                # af
 uv run suite compare  --baseline results/<run-1> --run results/<run-2>      # fixed / regressed / unchanged
 ```
 
+- `prompts/smoke` is the shipped smoke pack: 11 prompts, 106 attempts, written for the mock bot.
 - `validate` prints the plan (prompts, attempts, limits, `authorized:`) and refuses a plan that has
   no `authorized:` reference or that exceeds `max_requests`. `run` repeats that check first.
 - `run` ends with `fail N · pass N · inconclusive N · needs_review N` (attempt counts) and the run
@@ -50,7 +56,9 @@ uv run suite compare  --baseline results/<run-1> --run results/<run-2>      # fi
 - `results/` is git-ignored: evidence may contain real data. It holds `run.json`, `evidence.db`,
   `report.html`, `report.md`, `matrix.csv` and `review.csv` for each run.
 - Exit codes: 0 ok, 2 for a bad input file or a refused plan, 1 for anything unexpected, 130 for
-  Ctrl+C. Errors print as one `error: ...` line, never a traceback.
+  Ctrl+C (the partial run folder is kept). Errors print as one `error: ...` line, never a traceback.
+- A run that **aborts** (too many consecutive errors, `abort_after_errors`) still exits 0, with a
+  `warning:` line on stderr; its unsent attempts show as Inconclusive in the report, never as Pass.
 
 ### Private org-bot files
 

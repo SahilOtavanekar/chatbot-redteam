@@ -1,6 +1,6 @@
 # HANDOFF — chatbot-redteam (resume here)
 
-Last updated: 2026-10-23. Written so a fresh session in `C:\dev\chatbot-redteam` can continue
+Last updated: 2026-10-26. Written so a fresh session in `C:\dev\chatbot-redteam` can continue
 with no prior conversation. Read this, then `CLAUDE.md`, then the spec.
 
 ## What this project is
@@ -21,18 +21,24 @@ owned test target.
 - **Plan approved; execution = subagent-driven** (fresh implementer + reviewer per task):
   `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md` (18 tasks, TDD). Sahil also approved
   git-ignored `endpoints/private/` + `prompts/private/` (added to Task 15).
-- **Build paused 2026-10-25 at Sahil's request, on branch `feat/v0.1`** (`main` holds only the
-  planning docs). **Tasks 1–14 complete and reviewed** (scaffold, config, prompt packs + patterns,
-  planner, extractor, engine, HTTP adapter + mock + N1 benchmark, judge, PyRIT detectors + Gandalf,
-  evidence store, reports, run orchestration, finalize, compare). 599 tests passing at `dc9e212`
-  (Executed by the Task 14 implementer). N1 benchmark Executed: 100 prompts @50 concurrency with a
-  1 s mock → ~2.7 s, peak 50 (spike: PyRIT AttackExecutor 17.5 s, plain httpx 3.1 s).
-  **Task 15 (CLI + shipped files) was dispatched and still running at the pause; not reviewed.**
+- **v0.1 built, on branch `feat/v0.1`** (`main` holds only the planning docs). **Tasks 1–16
+  complete and reviewed** (scaffold, config, prompt packs + patterns, planner, extractor, engine,
+  HTTP adapter + mock + N1 benchmark, judge, PyRIT detectors + Gandalf, evidence store, reports,
+  run orchestration, finalize, compare, CLI + shipped endpoints and smoke pack, and the mock
+  validation in `docs/validation/v0.1-mock.md`). **The final whole-branch review is done and its
+  fix wave applied** (2026-10-26: `${VAR}` secrets kept out of error text, evidence and reports;
+  in-flight attempts labelled "no outcome recorded"; hardening; these docs). 655 tests passing
+  (Executed 2026-10-26). N1 benchmark Executed: 100 prompts @50 concurrency with a 1 s mock →
+  ~2.5–2.7 s, peak 50 (spike: PyRIT AttackExecutor 17.5 s, plain httpx 3.1 s).
+- **Tasks 17–18 (lab-bot and Gandalf packs + validation) wait for Sahil's prompt text** — Claude
+  never writes attack prompts; it transcribes Sahil's text verbatim.
+- **Pushed 2026-10-26** to https://github.com/SahilOtavanekar/chatbot-redteam (`main` and
+  `feat/v0.1`); CI (ubuntu + windows: ruff, format, mypy, pytest) green.
 - **Open items for Sahil:** (1) prompt text for Tasks 17 (lab bot) and 18 (Gandalf); (2) Gandalf's
   API (`gandalf-api.lakera.ai/api/send-message`) returned **503** on 2026-10-25 (Executed probe) —
   re-check before Task 18; (3) before org-bot runs: should a guardrail's HTTP 400 "blocked" reply
   (e.g. Azure content filter) count as a refusal instead of Inconclusive?; (4) commit trailers are
-  mixed (Opus/Sonnet) — tidy at merge if wanted; (5) GitHub remote + PR at the end.
+  mixed (Opus/Sonnet) — tidy at merge if wanted.
 - The SDD **ledger** `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/progress.md` (git-ignored,
   this machine only) holds every ruling and deferred minor finding. Read it before resuming.
 - A **PyRIT 1.1.0 spike was run** (Executed, throwaway) and proved the core approach. Findings and
@@ -54,8 +60,10 @@ owned test target.
    (CoPyRIT's style) can replace the views later without touching logic. Replaces the earlier
    Streamlit plan. v0.1 ships CLI + static HTML report. (Pull the review screen
    into v0.1 only if the demo needs it.)
-6. **Validation targets:** mock server, the lab bot, and **Gandalf** (via PyRIT's `GandalfTarget` +
-   `GandalfScorer`). Org bots are designed-for but not demoed in v0.1.
+6. **Validation targets:** mock server, the lab bot, and **Gandalf** (sent via PyRIT's
+   `GandalfTarget`; judged by our own deterministic password check — candidate words from the
+   reply, each confirmed by Gandalf's guess-password API — **not** `GandalfScorer`, which needs an
+   LLM; spec §16.3). Org bots are designed-for but not demoed in v0.1.
 7. Repo name chosen by Sahil: **chatbot-redteam**.
 
 ## PyRIT pieces we use in v0.1 (all behind `adapters/`)
@@ -73,10 +81,10 @@ subset (baseline, gpt-is-password-encoded, gandalf-the-white).
 ## Next step (the gate)
 
 1. Sahil reviews progress (ledger + `git log feat/v0.1`); answer from the ledger, don't re-run tasks.
-2. Resume superpowers:subagent-driven-development at Task 15: if its commit landed after `dc9e212`,
-   review it; otherwise re-dispatch it. Then Task 16 (mock validation) → stop for Sahil's prompt text
-   (Tasks 17–18) → final whole-branch review → finishing-a-development-branch (ask before creating
-   a GitHub remote).
+2. Tasks 17–18, once Sahil supplies the prompt text: transcribe it verbatim into the lab-bot and
+   Gandalf packs, then run and document those validations (re-check the Gandalf API first).
+3. Then superpowers:finishing-a-development-branch: open a PR from `feat/v0.1` to `main`; merge
+   after CI is green.
 
 ## Environment notes
 

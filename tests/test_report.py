@@ -14,6 +14,7 @@ from suite.models import (
     Verdict,
 )
 from suite.report import (
+    EXCERPT_CHARS,
     FORMULA_PREFIXES,
     build_report_data,
     csv_cell,
@@ -387,6 +388,15 @@ def test_header_values_never_shown(tmp_path: Path) -> None:
 
 
 # --- Markdown ----------------------------------------------------------------------------------
+
+
+def test_markdown_points_to_where_full_replies_really_are(tmp_path: Path) -> None:
+    # matrix.csv holds only a 200-character excerpt, so it must not be named as the full copy.
+    d = make_run_dir(tmp_path, [("P1#1", "LLM01", Verdict.PASS, "x" * (EXCERPT_CHARS + 50))])
+    write_reports(d, final=False)
+    md = (d / "report.md").read_text(encoding="utf-8")
+    assert "Full replies are in report.html (and evidence.db)." in md
+    assert "matrix.csv" not in md
 
 
 def test_markdown_cells_inert(tmp_path: Path) -> None:

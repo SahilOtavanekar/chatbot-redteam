@@ -5,24 +5,23 @@ chatbot API **in parallel**, judges each reply deterministically, queues the res
 review, and generates an OWASP-aligned report. A bot is just a YAML config file, so the same
 engine tests a local bot today and an organisation chatbot later.
 
-**Status (paused 2026-10-25): v0.1 build in progress on branch `feat/v0.1` — Tasks 1–14 done
-and reviewed (599 tests passing at dc9e212); Task 15 (CLI) implementer was still running at the
-pause — its review has NOT started.**
+**Status (2026-10-26): v0.1 built (Tasks 1–16 done, final review fixes applied); Tasks 17–18
+wait for Sahil's prompt text; branch `feat/v0.1` pushed, CI green.**
 Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
 (see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
+Mock validation: `docs/validation/v0.1-mock.md`.
 
 ## How to resume the build (next session)
 
 1. `git switch feat/v0.1` (should already be checked out); `uv sync`; `uv run pytest -q` → expect
-   599+ passed on Python 3.13 (`.python-version` pins it; more if Task 15's commit landed).
+   655 passed, 1 deselected (the live Gandalf test) on Python 3.13 (`.python-version` pins it).
 2. The build runs with **superpowers:subagent-driven-development** (Sahil's choice). Its ledger is
    `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/progress.md` — **git-ignored, local only**.
-   Read it first: it has every ruling, deferred minor, and a `RESUME HERE` line. Trust the ledger
-   + `git log` over memory; never re-dispatch a task marked `complete`.
-3. Next action: check `git log` for a Task 15 commit after `dc9e212` (and `task-15-report.md` in
-   the ledger folder). If present → review it (package `dc9e212..HEAD`); if absent or the tree is
-   dirty → inspect, then re-dispatch Task 15. Then Task 16 (mock validation). Stop before Tasks
-   17–18 — they need prompt text from Sahil. Then the final whole-branch review.
+   Read it first: it has every ruling and deferred minor. Trust the ledger + `git log` over memory;
+   never re-dispatch a task marked `complete`.
+3. Next action: Tasks 17–18, once Sahil supplies the prompt text (Claude transcribes it verbatim;
+   re-check the Gandalf API before Task 18). Then superpowers:finishing-a-development-branch: open
+   a PR from `feat/v0.1` to `main`, merge after CI is green.
 4. Sahil may first want to review progress; summarise from the ledger, don't re-run tasks.
 
 This project was split out of the `ai-red-teaming` lab (at `C:\dev\ai-red-teaming`). The lab's
@@ -55,16 +54,18 @@ deliberately vulnerable bot is this framework's first owned test target.
   10, NIST AI 600-1).
 - Work on a branch; open a PR; merge after CI is green. Check ports before starting a server.
 
-## Layout (✔ = built so far; full map in the plan's "File map")
+## Layout (✔ = built; full map in the plan's "File map")
 
 ```
 src/suite/   ✔ models, config, prompts, patterns, planner, extract, engine, judge,
-             adapters/ (only PyRIT importer), evidence, report, run, review, compare · cli (Task 15)
-endpoints/   one YAML per bot (mock, lab-bot, gandalf-*); private/ subdir git-ignored (Task 15)
-prompts/     prompt packs (YAML/CSV); Sahil authors the text; private/ subdir git-ignored (Task 15)
+             adapters/ (only PyRIT importer), evidence, report, run, review, compare, cli
+endpoints/   ✔ one YAML per bot (mock, lab-bot, gandalf-baseline/-mid/-hardest);
+             private/ subdir git-ignored
+prompts/     ✔ prompt packs (YAML/CSV): smoke (for the mock); lab-bot and Gandalf packs wait for
+             Sahil's text (Tasks 17–18); private/ subdir git-ignored
 results/     git-ignored run folders (run.json, evidence.db, matrix.csv, report.*, review.csv)
-tests/       pytest, one suite per component (+ mockbot.py, factories.py, fakes.py)
-docs/        specs/, superpowers/plans/, HANDOFF.md, pyrit-*.md, validation/ (later)
+tests/       ✔ pytest, one suite per component (+ mockbot.py, factories.py, fakes.py)
+docs/        specs/, superpowers/plans/, HANDOFF.md, pyrit-*.md, validation/ (v0.1-mock.md)
 ```
 
 Decided 2026-10-23: v0.2 UI = **FastAPI + HTMX + Jinja2** with a JSON API (`/api/v1`) underneath, so
@@ -77,13 +78,15 @@ uv sync
 uv run pytest -q
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
-# CLI (built in Task 15):
-uv run suite validate --endpoint endpoints/lab-bot.yaml --pack prompts/core
-uv run suite run      --endpoint endpoints/lab-bot.yaml --pack prompts/core
+# CLI against the local mock bot. Check port 8199 is free first, then in another terminal:
+uv run python tests/mockbot.py --port 8199
+uv run suite validate --endpoint endpoints/mock.yaml --pack prompts/smoke   # sends nothing
+uv run suite run      --endpoint endpoints/mock.yaml --pack prompts/smoke
 uv run suite finalize --run results/<run-id>
 uv run suite compare  --baseline results/<r1> --run results/<r2>
 ```
 
 ## Next step
 
-Resume the subagent-driven build at Task 15's review (see "How to resume" above).
+Tasks 17–18 once Sahil supplies the prompt text, then finishing-a-development-branch (PR) — see
+"How to resume" above.

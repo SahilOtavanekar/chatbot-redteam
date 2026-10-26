@@ -7,20 +7,25 @@ run that is aborted, cancelled or crashes still leaves usable evidence, and its 
 how it ended: ``complete``, ``aborted`` (too many consecutive errors) or ``interrupted``.
 Attempts that were never stored show up in the reports as Inconclusive, never as a Pass.
 
+A reply is judged as it came back, then stored with every ``${VAR}`` secret of the endpoint
+replaced by ``***`` (in the reply and in the reasons), so a bot that echoes its credential, or an
+error message that quotes a url or header value, puts no secret in the evidence or the reports.
+
 The caller owns the sender (the CLI closes it) and does the printing; nothing is printed here.
 """
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from suite.config import EndpointSpec, masked
+from suite.config import EndpointSpec, masked, scrub_secrets
 from suite.engine import RateLimiter, Sender, run_attempts
 from suite.evidence import EvidenceStore, new_run_id, utc_now, write_run_json
 from suite.judge import Detector, judge_outcome
-from suite.models import SendOutcome, Verdict
+from suite.models import Judgement, SendOutcome, Verdict
 from suite.planner import build_attempts
 from suite.prompts import Pack
 from suite.report import EVIDENCE_DB, write_reports
@@ -63,6 +68,18 @@ def _create_run_folder(results_dir: Path, run_id: str) -> Path:
             suffix += 1
             continue
         return folder
+
+
+def _scrub_outcome(spec: EndpointSpec, outcome: SendOutcome) -> SendOutcome:
+    """The outcome with every ``${VAR}`` secret of ``spec`` in its reply made ``***``."""
+    if outcome.reply is None:
+        return outcome
+    return replace(outcome, reply=scrub_secrets(spec, outcome.reply))
+
+
+def _scrub_judgement(spec: EndpointSpec, judgement: Judgement) -> Judgement:
+    """The judgement with every ``${VAR}`` secret of ``spec`` in its reasons made ``***``."""
+    return replace(judgement, reasons=tuple(scrub_secrets(spec, r) for r in judgement.reasons))
 
 
 def _write_final_files(run_dir: Path, record: dict[str, Any], store: EvidenceStore) -> None:
@@ -118,7 +135,9 @@ async def execute_run(
         judgement = await judge_outcome(
             outcome, prompts[outcome.attempt.prompt_id], detectors=detectors, forced=forced
         )
-        store.add_attempt(outcome, judgement)
+        # Judged on the raw reply; stored without the endpoint's secrets. An error message can
+        # quote a url or header value, and a bot can echo its own credential.
+        store.add_attempt(_scrub_outcome(spec, outcome), _scrub_judgement(spec, judgement))
         summary[judgement.verdict.value] += 1  # counts what was stored
 
     status = "interrupted"  # until the engine returns: cancelled, or any failure on the way

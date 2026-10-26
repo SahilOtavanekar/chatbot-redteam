@@ -3,7 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from suite.config import GANDALF_LEVELS, EndpointSpec, Limits, load_endpoint, masked
+from suite.config import (
+    GANDALF_LEVELS,
+    EndpointSpec,
+    Limits,
+    load_endpoint,
+    masked,
+    scrub_secrets,
+)
 from suite.models import ConfigError
 from tests.factories import make_spec
 
@@ -145,6 +152,58 @@ def test_url_must_be_http_or_https(tmp_path, url):
     p = write(tmp_path, f'name: b\ntype: http\nurl: "{url}"\nbody: {{m: "{{prompt}}"}}\n')
     with pytest.raises(ConfigError, match="url"):
         load_endpoint(p, env={})
+
+
+# A url that passes validation reaches PyRIT, whose errors quote the whole url (secrets and all),
+# so config must reject every url PyRIT or httpx would choke on, without quoting it either.
+SECRET = "hunter2-SECRET"
+
+
+def url_yaml(url: str) -> str:
+    """An endpoint with ``url``; JSON quoting writes control characters as escapes YAML decodes."""
+    return f'name: b\ntype: http\nurl: {json.dumps(url)}\nbody: {{m: "{{prompt}}"}}\n'
+
+
+@pytest.mark.parametrize(
+    ("url", "problem"),
+    [
+        ("https://api.example.com:99999/chat?key=${API_KEY}", "invalid port"),
+        ("https://api.example.com:${API_KEY}/chat", "invalid port"),
+        ("http://x.test:0/c?key=${API_KEY}", "invalid port"),
+        ("http://:8080/c?key=${API_KEY}", "host"),
+        ("http://[::1/c?key=${API_KEY}", "not a valid"),
+        ("http://x.test/c?key=${API_KEY} more", "whitespace"),
+        (" http://x.test/c?key=${API_KEY}", "whitespace"),
+        ("http://x.test/c?key=${API_KEY}\t", "whitespace"),
+        ("http://x.test/c?key=${API_KEY}\x00", "control"),
+        ("http://user:${API_KEY}@x.test/c", "credentials in headers"),
+        ("http://${API_KEY}@x.test/c", "credentials in headers"),
+    ],
+)
+def test_bad_url_is_rejected_without_echoing_the_secret(tmp_path, url, problem):
+    p = write(tmp_path, url_yaml(url))
+    with pytest.raises(ConfigError, match="url") as e:
+        load_endpoint(p, env={"API_KEY": SECRET})
+    message = str(e.value)
+    assert message.startswith(str(p))
+    assert problem in message
+    assert SECRET not in message
+    assert "SECRET" not in message
+    assert e.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000/chat",
+        "https://api.example.com:8443/v1/chat?key=${API_KEY}",
+        "http://[::1]:8000/chat",
+        "HTTPS://API.EXAMPLE.COM/chat",
+    ],
+)
+def test_ordinary_urls_are_accepted(tmp_path, url):
+    spec = load_endpoint(write(tmp_path, url_yaml(url)), env={"API_KEY": SECRET})
+    assert spec.url == url.replace("${API_KEY}", SECRET)
 
 
 def test_gandalf_needs_known_level(tmp_path):
@@ -296,6 +355,20 @@ def test_masked_leaves_a_spec_without_interpolation_unchanged_apart_from_headers
     assert masked(spec) == {**spec.model_dump(), "headers": {"X": "***"}}
 
 
+def test_scrub_secrets_hides_every_interpolated_value_in_free_text(tmp_path):
+    p = write(tmp_path, SECRET_IN_URL_AND_BODY.replace('"{prompt}"', '"${LONG}{prompt}"'))
+    spec = load_endpoint(p, env={"KEY": "abc", "LONG": "abcdef"})
+    text = "error: abcdef was rejected; key=abc; ABC is not a secret"
+    # Longest first: "abcdef" must not come out as "***def".
+    assert scrub_secrets(spec, text) == "error: *** was rejected; key=***; ABC is not a secret"
+
+
+def test_scrub_secrets_leaves_text_alone_without_interpolated_values(tmp_path):
+    spec = load_endpoint(write(tmp_path, WITH_TOKEN), env={"TOK": ""})  # empty: nothing to hide
+    assert scrub_secrets(spec, "Bearer and more") == "Bearer and more"
+    assert scrub_secrets(make_spec(), "plain text") == "plain text"
+
+
 @pytest.mark.parametrize("ref", ["${token}", "${Token}", "${MY-TOKEN}", "${}", "${ TOK }"])
 def test_leftover_placeholder_rejected(tmp_path, ref):
     p = write(tmp_path, WITH_TOKEN.replace("${TOK}", ref))
@@ -381,6 +454,22 @@ def test_header_values_reject_line_breaks(tmp_path, value):
     assert str(e.value).startswith(str(p))
     assert "X-Key" in str(e.value)
     assert "CR or LF" in str(e.value)
+
+
+@pytest.mark.parametrize("char", ["\x00", "\x0b", "\x0c", "\x1b", "\x7f", "\t"])
+def test_header_values_reject_control_characters(tmp_path, char):
+    # h11 refuses these with "Illegal header value b'<the whole value>'", which would carry the
+    # secret into an error message, so config refuses them first and never quotes the value.
+    p = write(tmp_path, header_yaml('  X-Key: "Bearer ${TOK}"\n'))
+    with pytest.raises(ConfigError, match="headers") as e:
+        load_endpoint(p, env={"TOK": f"{SECRET}{char}tail"})
+    message = str(e.value)
+    assert message.startswith(str(p))
+    assert "X-Key" in message
+    assert "control characters" in message
+    assert "SECRET" not in message
+    assert "tail" not in message
+    assert e.value.__cause__ is None
 
 
 def test_line_break_error_never_echoes_the_secret_value(tmp_path):

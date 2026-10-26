@@ -56,7 +56,10 @@ def test_raw_request_leaves_non_ascii_body_text_unescaped():
 
 
 def test_raw_request_host_header_never_carries_url_credentials():
-    request = build_raw_request(make_spec(url="http://user:secret@127.0.0.1:9/chat"))
+    # Config refuses a url with user:password@; the adapter still strips it as a backstop, so
+    # the spec here skips validation (model_copy does not validate).
+    spec = make_spec().model_copy(update={"url": "http://user:secret@127.0.0.1:9/chat"})
+    request = build_raw_request(spec)
     assert "secret" not in request
     assert "Host: 127.0.0.1:9\n" in request
 

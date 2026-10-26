@@ -277,6 +277,62 @@ def test_unexpected_error_exit_1_without_traceback(monkeypatch, capsys):
     assert "Traceback" not in err
 
 
+SECRET = "hunter2-SECRET"
+
+
+def write_secret_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An endpoint whose url and header take ``${API_KEY}`` (set to SECRET) from the environment."""
+    monkeypatch.setenv("API_KEY", SECRET)
+    path = tmp_path / "secret-endpoint.yaml"
+    path.write_text(
+        "name: mock\n"
+        "type: http\n"
+        'authorized: "owned local mock (tests/mockbot.py)"\n'
+        "url: http://127.0.0.1:9/chat?key=${API_KEY}\n"
+        "headers:\n  Authorization: Bearer ${API_KEY}\n"
+        'body: { message: "{prompt}" }\n',
+        encoding="utf-8",
+    )
+    return path
+
+
+def write_pack(tmp_path: Path) -> Path:
+    path = tmp_path / "pack.yaml"
+    path.write_text(
+        '- id: P-1\n  category: LLM01\n  prompt: "What are your opening hours?"\n',
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_unexpected_run_error_never_prints_a_secret(tmp_path, monkeypatch, capsys):
+    # PyRIT's errors can quote the url (and the secret in it); the CLI scrubs before printing.
+    import suite.adapters as adapters  # loads PyRIT
+
+    def broken_build_sender(spec):
+        raise ValueError(SECRET)
+
+    monkeypatch.setattr(adapters, "build_sender", broken_build_sender)
+    endpoint = write_secret_endpoint(tmp_path, monkeypatch)
+    code = main(
+        [
+            "run",
+            "--endpoint",
+            str(endpoint),
+            "--pack",
+            str(write_pack(tmp_path)),
+            "--results-dir",
+            str(tmp_path / "results"),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "error: unexpected ValueError: ***" in captured.err.splitlines()
+    assert SECRET not in captured.out
+    assert SECRET not in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_ctrl_c_during_run_exit_130(monkeypatch, capsys):
     def interrupted(args):
         raise KeyboardInterrupt

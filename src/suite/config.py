@@ -51,6 +51,7 @@ _ENV_REF = re.compile(r"\$\{([A-Z0-9_]+)\}")
 # (RFC 9110) are safe: anything else could smuggle in a Host override or a second header.
 _HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _DERIVED_HEADERS = frozenset({"host", "content-length"})  # taken from the url and the body
+_CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")  # the C0 controls and DEL
 
 
 class Limits(BaseModel):
@@ -89,14 +90,34 @@ class EndpointSpec(BaseModel):
     @field_validator("url")
     @classmethod
     def _url_is_http(cls, value: str | None) -> str | None:
-        if value is not None:
+        # A url that gets past here reaches PyRIT and httpx, whose errors quote the whole url
+        # (and any secret in it), so refuse here anything they would refuse. Never quote the url.
+        if value is None:
+            return value
+        if any(char.isspace() for char in value):
+            raise ValueError("url must not contain whitespace; write a space as %20")
+        if _CONTROL_CHAR.search(value):
+            raise ValueError("url must not contain control characters")
+        try:
             parts = urlsplit(value)
-            if parts.scheme not in ("http", "https") or not parts.netloc:
-                raise ValueError("url must be an absolute http:// or https:// address")
-            if PROMPT_MARKER in value:
-                raise ValueError(
-                    f"url must not contain {PROMPT_MARKER}; the prompt goes in the body"
-                )
+        except ValueError:
+            raise ValueError("url is not a valid address") from None
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ValueError("url must be an absolute http:// or https:// address")
+        if "@" in parts.netloc:
+            raise ValueError(
+                "url must not contain user:password@; put credentials in headers, not the url"
+            )
+        if not parts.hostname:
+            raise ValueError("url must name a host")
+        try:
+            port = parts.port
+        except ValueError:
+            raise ValueError("url has an invalid port") from None
+        if port == 0:
+            raise ValueError("url has an invalid port")
+        if PROMPT_MARKER in value:
+            raise ValueError(f"url must not contain {PROMPT_MARKER}; the prompt goes in the body")
         return value
 
     @field_validator("headers")
@@ -112,8 +133,12 @@ class EndpointSpec(BaseModel):
                 )
             if name.lower() in _DERIVED_HEADERS:
                 raise ValueError(f"the {name} header cannot be set; it comes from the url and body")
-            if "\r" in text or "\n" in text:
-                raise ValueError(f"header {name!r}: the value must not contain CR or LF")
+            # h11 refuses these and quotes the whole value in its error, so refuse them first.
+            if _CONTROL_CHAR.search(text):
+                raise ValueError(
+                    f"header {name!r}: the value must not contain control characters "
+                    "(CR or LF, tab, NUL, DEL, ...)"
+                )
             if PROMPT_MARKER in text:
                 raise ValueError(
                     f"header {name!r}: the value must not contain {PROMPT_MARKER}; "
@@ -281,6 +306,11 @@ def _scrub(value: Any, secrets: list[str]) -> Any:
     return value
 
 
+def _secrets(spec: EndpointSpec) -> list[str]:
+    # Longest first, so a secret that contains another is not left half-visible.
+    return sorted(spec._secret_values, key=len, reverse=True)
+
+
 def masked(spec: EndpointSpec) -> dict[str, Any]:
     """The spec as a plain dict that is safe to store or print; the spec is not changed.
 
@@ -289,8 +319,19 @@ def masked(spec: EndpointSpec) -> dict[str, Any]:
     ``***``. A secret typed literally into the YAML cannot be recognised, so keep secrets in
     ``${VAR}`` references.
     """
-    # Longest first, so a secret that contains another is not left half-visible.
-    secrets = sorted(spec._secret_values, key=len, reverse=True)
-    dumped: dict[str, Any] = _scrub(spec.model_dump(), secrets)
+    dumped: dict[str, Any] = _scrub(spec.model_dump(), _secrets(spec))
     dumped["headers"] = {name: "***" for name in dumped["headers"]}
     return dumped
+
+
+def scrub_secrets(spec: EndpointSpec, text: str) -> str:
+    """``text`` with each non-empty value substituted for a ``${VAR}`` in ``spec`` made ``***``.
+
+    For free text that may quote a secret: an exception message (PyRIT and httpx errors can
+    quote a url or a header value) or a reply from a bot that echoes its credential. Pass the
+    spec ``load_endpoint`` returned: the substituted values live on that object only and do not
+    survive a copy or a dump. Like :func:`masked`, it cannot recognise a secret typed literally
+    into the YAML.
+    """
+    scrubbed: str = _scrub(text, _secrets(spec))
+    return scrubbed

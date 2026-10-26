@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from suite.compare import Change, compare_runs, endpoint_name, write_compare
-from suite.config import EndpointSpec, load_endpoint
+from suite.config import EndpointSpec, load_endpoint, scrub_secrets
 from suite.engine import RateLimiter
 from suite.evidence import read_run_json
 from suite.models import ConfigError, Verdict
@@ -136,7 +136,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not report.ok:
         return _refuse(report)
 
-    run_dir = asyncio.run(_run(spec, pack, args.pack, args.results_dir))
+    try:
+        run_dir = asyncio.run(_run(spec, pack, args.pack, args.results_dir))
+    except (KeyboardInterrupt, ConfigError):
+        raise  # main prints these
+    except Exception as exc:
+        # PyRIT's and httpx's messages can quote the url or a header value, so the endpoint's
+        # ${VAR} secrets are scrubbed first. (main's own handler cannot: it has no spec.)
+        detail = scrub_secrets(spec, f"{type(exc).__name__}: {exc}")
+        print(f"error: unexpected {detail}", file=sys.stderr)
+        return EXIT_UNEXPECTED
 
     run = read_run_json(run_dir)
     summary = run["summary"]

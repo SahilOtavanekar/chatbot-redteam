@@ -291,6 +291,67 @@ async def test_interpolated_secrets_never_written(tmp_path, capsys):
     assert read_run_json(run_dir)["endpoint"]["url"] == "http://127.0.0.1:9/chat?key=***"
 
 
+async def test_secret_in_an_error_or_an_echoed_reply_never_reaches_the_run_folder(tmp_path):
+    # Review Focus 3: an exception message can quote a header value or url (h11's "Illegal
+    # header value b'...'", PyRIT's "Invalid port in HTTP destination: <url>"), and a bot can
+    # echo its own credential. The judge sees the raw reply; what is stored and reported never
+    # holds the secret.
+    secret = "hunter2-SECRET"
+    endpoint = tmp_path / "bot.yaml"
+    endpoint.write_text(
+        "name: t\n"
+        "type: http\n"
+        "authorized: test\n"
+        "url: http://127.0.0.1:9/chat?key=${API_KEY}\n"
+        "headers:\n  Authorization: Bearer ${API_KEY}\n"
+        'body:\n  message: "{prompt}"\n',
+        encoding="utf-8",
+    )
+    spec = load_endpoint(endpoint, env={"API_KEY": secret})
+
+    async def script(text: str, n: int) -> str:
+        if text == "send error":
+            raise SendError("transport", f"LocalProtocolError: Illegal header value b'{secret}'")
+        if text == "crash":  # not a SendError: the engine's catch-all makes it "transport"
+            raise RuntimeError(f"Invalid port in HTTP destination: http://h/c?key={secret}")
+        return f"Your key is {secret}; keep it safe."  # the bot echoes its credential
+
+    async def echo_check(reply: str) -> str | None:
+        return f"credential_leak: {secret} is in the reply" if secret in reply else None
+
+    pack = make_pack(
+        make_prompt("A", text="send error", must_not_contain=[CANARY]),
+        make_prompt("B", text="crash", must_not_contain=[CANARY]),
+        make_prompt("C", text="echo checked", detectors=["credential_leak"]),
+        make_prompt("D", text="echo for review"),  # no checks: the reply goes to review.csv
+    )
+    run_dir = await go(
+        tmp_path / "results",
+        FakeSender(script),
+        pack,
+        spec=spec,
+        detectors={"credential_leak": echo_check},
+    )
+
+    rows = stored(run_dir)
+    assert rows["A#1"] == (
+        Verdict.INCONCLUSIVE,
+        ("transport: LocalProtocolError: Illegal header value b'***'",),
+    )
+    assert rows["B#1"] == (
+        Verdict.INCONCLUSIVE,
+        ("transport: RuntimeError: Invalid port in HTTP destination: http://h/c?key=***",),
+    )
+    # Judged on the raw reply (the check saw the secret and tripped); stored scrubbed.
+    assert rows["C#1"] == (Verdict.FAIL, ("credential_leak: *** is in the reply",))
+    assert rows["D#1"][0] is Verdict.NEEDS_REVIEW
+    assert "Your key is ***; keep it safe." in (run_dir / "review.csv").read_text(
+        encoding="utf-8-sig"
+    )
+    # Every file of the run folder, evidence.db included, byte for byte.
+    assert [p.name for p in run_dir.iterdir() if secret.encode() in p.read_bytes()] == []
+
+
 async def test_nothing_is_printed(tmp_path, capsys):
     await go(tmp_path, FakeSender(reply_ok), make_pack(make_prompt()))
     captured = capsys.readouterr()

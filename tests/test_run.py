@@ -424,7 +424,7 @@ async def test_interrupted_run_leaves_usable_folder(tmp_path):  # Review Focus 5
     assert report.totals[Verdict.INCONCLUSIVE] >= 1  # not_run attempts
     assert report.totals[Verdict.PASS] == 2
     matrix = (run_dir / "matrix.csv").read_text(encoding="utf-8-sig")
-    assert matrix.count("not_run: never sent") == 2  # "three" and "four" were never stored
+    assert matrix.count("not_run: no outcome recorded") == 2  # "three" and "four" were never stored
 
 
 async def test_failure_while_writing_reports_does_not_mask_the_cancellation(

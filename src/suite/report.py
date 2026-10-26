@@ -6,7 +6,8 @@ can be rebuilt at any time, in particular after ``finalize`` has merged human ve
 Three rules shape the output:
 
 * **Inconclusive is never a pass.** An attempt that was planned but never stored counts as
-  Inconclusive (``not_run: never sent``), and in a *final* report any attempt still waiting for
+  Inconclusive (``not_run: no outcome recorded``; one in flight at Ctrl+C was usually sent, so
+  the label does not claim it was not), and in a *final* report any attempt still waiting for
   review also becomes Inconclusive (``not reviewed``).
 * **Replies are redacted here, not in the database.** ``evidence.db`` keeps raw replies; when
   ``run.json`` says ``redact`` (the default) every reply, reason and note goes through
@@ -35,7 +36,7 @@ from suite.prompts import OWASP_LLM_2025
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 EVIDENCE_DB = "evidence.db"
-NOT_RUN_REASON = "not_run: never sent"
+NOT_RUN_REASON = "not_run: no outcome recorded"
 NOT_REVIEWED_REASON = "not reviewed"
 EXCERPT_CHARS = 200
 
@@ -315,7 +316,8 @@ def _fact(value: object) -> str:
 
 
 def _not_run(prompt_id: str, repeat_index: int) -> AttemptView:
-    """An attempt that was planned but never stored: Inconclusive, never a pass."""
+    """An attempt that was planned but has no stored outcome (never sent, or in flight when the
+    run was interrupted): Inconclusive, never a pass."""
     return AttemptView(
         attempt_id=f"{prompt_id}#{repeat_index}",
         verdict=Verdict.INCONCLUSIVE,

@@ -150,7 +150,7 @@ def test_missing_attempts_count_inconclusive(tmp_path: Path) -> None:
     assert [a.attempt_id for a in prompt.attempts] == ["P1#1", "P1#2", "P1#3"]
     missing = prompt.attempts[1:]
     assert all(a.verdict is Verdict.INCONCLUSIVE for a in missing)
-    assert all(a.reasons == ("not_run: never sent",) for a in missing)
+    assert all(a.reasons == ("not_run: no outcome recorded",) for a in missing)
     assert all(a.reply is None and a.error_kind == "not_run" for a in missing)
     assert data.totals[Verdict.INCONCLUSIVE] == 1 and data.totals[Verdict.PASS] == 0
 
@@ -531,7 +531,7 @@ def test_matrix_csv_columns_and_rows(tmp_path: Path) -> None:
     assert by_id["P1#1"]["hint"] == "refusal" and by_id["P1#1"]["decided_by"] == "rule"
     assert by_id["P1#1"]["latency_ms"] == "12"
     assert by_id["P1#2"]["verdict"] == "inconclusive"
-    assert by_id["P1#2"]["reasons"] == "not_run: never sent"
+    assert by_id["P1#2"]["reasons"] == "not_run: no outcome recorded"
     assert by_id["P1#2"]["error_kind"] == "not_run"
     excerpt = by_id["P2#1"]["reply_excerpt"]
     assert excerpt == ("first line second " + "x" * 300)[:200] and "\n" not in excerpt

@@ -10,7 +10,9 @@ The reviewer reads each reply against its ``pass_if`` and types ``pass`` or ``fa
 2. only if there are none, records each verdict as a human decision. If there is any problem,
    nothing is applied and one :class:`ConfigError` lists them all, so the reviewer fixes the
    sheet once;
-3. stamps ``finalized_at`` in ``run.json`` and writes the final reports.
+3. writes the final reports and, once they are written, stamps ``finalized_at`` in ``run.json``.
+   A report file that cannot be written (on Windows, one open in Excel) is a :class:`ConfigError`
+   that says to close it and finalize again.
 
 A blank verdict leaves an attempt pending: the final report shows it as Inconclusive
 (``not reviewed``), never as a pass. Finalizing again is safe: a person's earlier verdict can be
@@ -79,8 +81,9 @@ def finalize(run_dir: Path) -> FinalizeResult:
     """Merge the verdicts in ``run_dir/review.csv`` and write the final reports.
 
     Raises ConfigError if ``review.csv``, ``run.json`` or ``evidence.db`` is missing or
-    unreadable, if ``review.csv`` lacks the ``attempt_id``, ``verdict`` or ``note`` column, or if
-    any row has a problem (nothing is applied then).
+    unreadable, if ``review.csv`` lacks the ``attempt_id``, ``verdict`` or ``note`` column, if
+    any row has a problem (nothing is applied then), or if a report file cannot be written
+    (the verdicts are applied then, but ``finalized_at`` is not stamped).
     """
     review_path = run_dir / REVIEW_CSV
     if not review_path.is_file():
@@ -111,9 +114,16 @@ def finalize(run_dir: Path) -> FinalizeResult:
     finally:
         store.close()
 
+    try:
+        write_reports(run_dir, final=True)
+    except PermissionError as exc:  # on Windows, a report open in Excel is locked
+        where = exc.filename or "a report file"
+        raise ConfigError(
+            f"cannot write {where} — close it (e.g. in Excel) and run finalize again"
+        ) from None
+    # Stamped only once the final reports exist, so run.json never claims a finalize that failed.
     run["finalized_at"] = utc_now().isoformat()
     write_run_json(run_dir, run)
-    write_reports(run_dir, final=True)
     return FinalizeResult(applied=len(decisions), pending=pending)
 
 

@@ -172,8 +172,8 @@ def test_problems_are_readable(tmp_path):
 
     assert "LLM11" in message_for(category="LLM11")
     assert "LLM01" in message_for(category="LLM11")  # lists the valid categories
-    assert "at least 6 letters or digits — entries are matched loosely" in message_for(
-        checks={"must_not_contain": ["no"]}
+    assert "at least 6 ASCII letters or digits (A-Z, 0-9) — entries are matched loosely" in (
+        message_for(checks={"must_not_contain": ["no"]})
     )
     assert "credential_leak" in message_for(checks={"detectors": ["nope"]})
     assert "invalid regular expression" in message_for(checks={"must_not_match": ["re:("]})
@@ -188,8 +188,26 @@ def test_must_not_contain_counts_letters_and_digits_not_length(tmp_path):
     padded = write_prompts(
         tmp_path, "padded.yaml", item("PAD-1", checks={"must_not_contain": ["ab-cd-e!!!!!!"]})
     )
-    with pytest.raises(ConfigError, match="at least 6 letters or digits"):
+    with pytest.raises(ConfigError, match="at least 6 ASCII letters or digits"):
         load_pack(padded)
+
+
+@pytest.mark.parametrize("entry", ["пароль", "пароль1", "密码密码密码密码", "café12"])
+def test_must_not_contain_counts_only_what_the_judge_can_match(tmp_path, entry):
+    # The judge matches on A-Z and 0-9 after NFKC folding. An entry with fewer than 6 of those
+    # (another script; an accented letter drops out) could never be checked, so it is refused
+    # when the pack loads, not found out as a check error in the middle of a run.
+    path = write_prompts(tmp_path, "nl.yaml", item("NL-1", checks={"must_not_contain": [entry]}))
+    with pytest.raises(ConfigError, match=r"'NL-1'.*at least 6 ASCII letters or digits"):
+        load_pack(path)
+
+
+def test_must_not_contain_counts_look_alikes_the_judge_folds(tmp_path):
+    full_width = "ＣＡＮＡＲＹ７"  # NFKC folds it to CANARY7, which the judge matches
+    path = write_prompts(
+        tmp_path, "fw.yaml", item("FW-1", checks={"must_not_contain": [full_width]})
+    )
+    assert load_pack(path).prompts[0].checks.must_not_contain == [full_width]
 
 
 @pytest.mark.parametrize("repeat", [0, 21, -1])

@@ -24,7 +24,9 @@ TIMEOUT_GRACE_S = 5.0  # added to Limits.timeout_s for the engine's own hard tim
 RETRY_STATUSES = frozenset({429, 503})  # throttling responses worth retrying
 MAX_RETRY_DELAY_S = 30.0  # cap on one retry wait, also against a huge Retry-After
 WINDOW_S = 60.0  # the rate limiter's sliding window
-_COUNTED_KINDS = frozenset({"http_status", "timeout", "transport"})  # these feed the error streak
+# These feed the consecutive-error streak. unreadable_reply is one: an endpoint that answers
+# every prompt with HTTP 200 and an HTML page (a login page, say) is broken, not refusing.
+_COUNTED_KINDS = frozenset({"http_status", "timeout", "transport", "unreadable_reply"})
 
 
 class Sender(Protocol):

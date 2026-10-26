@@ -17,7 +17,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from suite.models import ConfigError
-from suite.patterns import compile_rule
+from suite.patterns import compile_rule, squash
 
 OWASP_LLM_2025: dict[str, str] = {
     "LLM01": "Prompt Injection",
@@ -51,11 +51,13 @@ class Checks(BaseModel):
     @field_validator("must_not_contain")
     @classmethod
     def _entries_have_enough_substance(cls, entries: list[str]) -> list[str]:
+        # Counted the way the judge matches (suite.patterns.squash: NFKC, upper case, A-Z and 0-9
+        # only), so an entry the judge could never check is refused here, not found out mid-run.
         for entry in entries:
-            if sum(char.isalnum() for char in entry) < MIN_CONTAIN_CHARS:
+            if len(squash(entry)) < MIN_CONTAIN_CHARS:
                 raise ValueError(
-                    f"entry {entry!r} needs at least {MIN_CONTAIN_CHARS} letters or digits "
-                    "— entries are matched loosely"
+                    f"entry {entry!r} needs at least {MIN_CONTAIN_CHARS} ASCII letters or digits "
+                    "(A-Z, 0-9) — entries are matched loosely"
                 )
         return entries
 
@@ -146,7 +148,7 @@ def load_pack(path: Path) -> Pack:
 
     Raises ConfigError, naming the file and the prompt id, for an unreadable file, a duplicate id
     (within or across files), an invalid prompt (unknown category, pattern or detector, a bad
-    regex, a ``must_not_contain`` entry with fewer than 6 letters or digits, ...) or an empty
+    regex, a ``must_not_contain`` entry with fewer than 6 ASCII letters or digits, ...) or an empty
     pack.
     """
     if path.is_dir():

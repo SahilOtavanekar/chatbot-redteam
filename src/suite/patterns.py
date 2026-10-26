@@ -1,4 +1,4 @@
-"""Named regex library, rule compilation and PII redaction.
+"""Named regex library, rule compilation, PII redaction and the loose text match (:func:`squash`).
 
 A prompt's ``must_not_match`` rules and the report redaction both draw on one library of named
 patterns, so a rule such as ``email_address`` means the same thing everywhere. The patterns are
@@ -17,7 +17,24 @@ for the judge-facing answer.
 """
 
 import re
+import unicodedata
 from collections.abc import Callable
+
+# The loose matching of ``must_not_contain`` entries, shared by the judge (which matches with it)
+# and the prompt-pack validator (which refuses an entry that leaves too little to match on).
+# Copied from the ai-red-teaming lab (C:\dev\ai-red-teaming\src\redteam\oracles.py: the pattern
+# at line 29 and _squash at lines 243-245) so this project does not depend on the lab.
+_NOT_ALNUM = re.compile(r"[^A-Z0-9]")
+
+
+def squash(text: str) -> str:
+    """Upper-case letters and digits only, after folding look-alikes (full-width, etc.).
+
+    NFKC folds compatibility look-alikes (``ＡＢＣ１`` becomes ``ABC1``), then everything but
+    ``A-Z`` and ``0-9`` is dropped, so letters of other scripts and accented letters vanish.
+    """
+    return _NOT_ALNUM.sub("", unicodedata.normalize("NFKC", text).upper())
+
 
 # An email's local part may not be longer than 64 characters (RFC 5321). The lookbehind stops a
 # match from starting inside a longer run of local-part characters, and the bound caps the work

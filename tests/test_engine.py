@@ -363,6 +363,21 @@ async def test_http_transport_and_timeout_errors_all_count_toward_abort(failure:
     assert stats.aborted is True
 
 
+async def test_unreadable_replies_count_toward_abort() -> None:
+    # A misconfigured org endpoint can answer every prompt with HTTP 200 and an HTML login page
+    # (extract maps that to unreadable_reply); it must stop the run, not burn the whole budget.
+    async def script(text: str, n: int) -> str:
+        raise SendError("unreadable_reply", "response is not JSON")
+
+    sender = FakeSender(script)
+    stats, outcomes = await run(
+        make_attempts(6), sender, Limits(concurrency=1, abort_after_errors=2)
+    )
+    assert len(sender.calls) == 2
+    assert stats.aborted is True
+    assert kinds(outcomes) == {"unreadable_reply": 2, "aborted": 4}
+
+
 async def test_empty_reply_errors_do_not_count_toward_abort() -> None:
     async def script(text: str, n: int) -> str:
         raise SendError("empty_reply", "the reply was empty")

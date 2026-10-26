@@ -1,12 +1,16 @@
 """Tests for the command line: validate, run, finalize, compare.
 
 Executed: every test here runs for real. The end-to-end test drives the real PyRIT HTTP sender
-against the local mock bot (tests/mockbot.py) through ``main``; the rest never import PyRIT.
+against the local mock bot (tests/mockbot.py) through ``main``. Two more ``run`` tests load PyRIT
+(``suite.adapters``) but swap in their own sender, so they send nothing: one for a secret in an
+unexpected error, one for a real Ctrl+C (an in-process SIGINT). The rest never import PyRIT.
 """
 
+import asyncio
 import csv
 import io
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +24,7 @@ from suite.evidence import read_run_json, write_run_json
 from suite.models import Verdict
 from suite.prompts import load_pack
 from tests.factories import make_run_dir
+from tests.fakes import FakeSender
 
 ROOT = Path(__file__).parents[1]  # shipped files are addressed from the repo root
 MOCK_ENDPOINT = ROOT / "endpoints" / "mock.yaml"
@@ -344,6 +349,49 @@ def test_ctrl_c_during_run_exit_130(monkeypatch, capsys):
     assert err.strip() == "interrupted — partial results were written under somewhere"
 
 
+def test_real_ctrl_c_during_a_send_exits_130_and_closes_the_sender(tmp_path, monkeypatch, capsys):
+    # A real SIGINT, raised in-process while a send is in flight. asyncio.run's own SIGINT handler
+    # cancels the run; execute_run leaves an interrupted run folder; _run closes the sender; and
+    # asyncio.run's KeyboardInterrupt becomes exit 130 in main.
+    import suite.adapters as adapters  # loads PyRIT
+
+    cancelled: list[str] = []
+
+    async def script(text: str, n: int) -> str:
+        signal.raise_signal(signal.SIGINT)  # Ctrl+C, while this send is in flight
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(text)
+            raise
+        return "not reached"
+
+    sender = FakeSender(script)
+    monkeypatch.setattr(adapters, "build_sender", lambda spec: sender)
+    results = tmp_path / "results"
+    code = main(
+        [
+            "run",
+            "--endpoint",
+            str(write_endpoint(tmp_path)),
+            "--pack",
+            str(write_pack(tmp_path)),
+            "--results-dir",
+            str(results),
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 130
+    assert err.strip() == f"interrupted — partial results were written under {results}"
+    # Cancelled by asyncio's handler (a plain KeyboardInterrupt would never reach the except).
+    assert cancelled == ["What are your opening hours?"]
+    assert sender.closed
+    run = read_run_json(only_run_folder(results))
+    assert (run["status"], run["sent_requests"]) == ("interrupted", 1)
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler  # handler restored
+
+
 def test_characters_the_console_cannot_show_do_not_crash_output(monkeypatch):
     # A console code page that cannot encode "→" must not turn a message into a crash.
     raw = io.BytesIO()
@@ -392,6 +440,15 @@ def test_shipped_gandalf_levels():
         "gandalf-mid": "gpt-is-password-encoded",
         "gandalf-hardest": "gandalf-the-white",
     }
+
+
+def test_shipped_gandalf_endpoints_leave_retries_to_pyrit():
+    # PyRIT's GandalfTarget retries every request once itself (2 attempts, 1 s apart), outside
+    # our rate limiter and request budget; an engine retry on top would multiply the requests.
+    for stem in ("gandalf-baseline", "gandalf-mid", "gandalf-hardest"):
+        path = ROOT / "endpoints" / f"{stem}.yaml"
+        assert load_endpoint(path, env={}).limits.max_retries == 0, stem
+        assert "retries" in path.read_text(encoding="utf-8").split("limits:")[0], stem  # says why
 
 
 def test_smoke_pack_is_the_documented_table():

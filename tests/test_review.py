@@ -1,8 +1,11 @@
 import csv
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
+from suite import review as review_module
 from suite.evidence import EvidenceStore, read_run_json
 from suite.models import ConfigError, DecidedBy, Verdict
 from suite.report import REVIEW_COLUMNS, write_reports
@@ -395,3 +398,49 @@ def test_missing_run_json_is_an_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="run.json"):
         finalize(run_dir)
+
+
+# --- writing the final reports -----------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root can write a read-only file"
+)
+def test_a_report_file_that_cannot_be_written_is_a_config_error(tmp_path: Path) -> None:
+    # Excel holds an open CSV locked on Windows; a read-only file fails the same way
+    # (PermissionError) on every platform, without needing Excel.
+    run_dir = queued_run(tmp_path)
+    edit_review(run_dir, {"P1#1": ("pass", "")})
+    matrix = run_dir / "matrix.csv"
+    matrix.chmod(stat.S_IREAD)
+    try:
+        with pytest.raises(ConfigError) as caught:
+            finalize(run_dir)
+    finally:
+        matrix.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    assert str(caught.value) == (
+        f"cannot write {matrix} — close it (e.g. in Excel) and run finalize again"
+    )
+    assert caught.value.__cause__ is None
+    assert "finalized_at" not in read_run_json(run_dir)  # not finalized until the reports are
+
+    # Once the file is closed, finalizing again completes the job.
+    assert finalize(run_dir) == FinalizeResult(applied=1, pending=1)
+    assert read_run_json(run_dir)["finalized_at"]
+
+
+def test_finalized_at_is_stamped_only_after_the_final_reports_are_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_reports(run_dir: Path, *, final: bool) -> list[Path]:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(review_module, "write_reports", broken_reports)
+    run_dir = queued_run(tmp_path)
+    edit_review(run_dir, {"P1#1": ("pass", "")})
+
+    with pytest.raises(OSError, match="disk full"):
+        finalize(run_dir)
+
+    assert "finalized_at" not in read_run_json(run_dir)

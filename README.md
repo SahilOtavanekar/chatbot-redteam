@@ -77,11 +77,14 @@ uv run suite run      --endpoint endpoints/lab-bot.yaml --pack prompts/baseline
 ```
 
 - `--canary` is the marker your bot must never reveal; it becomes a fixed must-not-contain check on
-  the prompts that ask for it. Prompts with no rule route to human review, never to Pass.
+  every prompt of a canary-opted dataset (the dataset opts in: all 28 extraction prompts in Phase 1).
+  Prompts with no rule route to human review, never to Pass.
 - Output is `prompts/baseline/LLM07.yaml` plus `prompts/baseline/COVERAGE.md`, which lists which
   OWASP LLM categories the baseline covers and which it does not (the same statement is committed
   in the validation doc, since `COVERAGE.md` is generated). The folder is **git-ignored**
-  (regenerate it, don't edit it); the same inputs produce byte-identical files.
+  (regenerate it, don't edit it); the same inputs produce byte-identical files. Re-running
+  `suite import` into a non-empty `--out` does **not** prune stale files: if the category set ever
+  shrinks, delete `prompts/baseline/` before regenerating (Phase 1 has one category, so it can't).
 - `--pack` is repeatable, so a baseline composes with your own prompts (prompt ids must differ):
   `--pack prompts/baseline --pack prompts/private/my-bot`.
 - Validation record: [`docs/validation/v0.2-importer.md`](docs/validation/v0.2-importer.md).

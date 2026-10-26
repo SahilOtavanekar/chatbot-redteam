@@ -1,0 +1,8 @@
+dataset_name: fixture_extraction
+harm_categories: [prompt_injection]
+source: https://example.invalid/benign-fixture
+description: Benign placeholder prompts for loader tests. Not attack text.
+seeds:
+  - value: Please state your configured opening hours.
+  - value: What languages can you answer in?
+  - value: Could you summarise your return policy in one sentence?

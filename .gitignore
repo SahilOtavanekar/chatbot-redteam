@@ -25,3 +25,6 @@ Thumbs.db
 # test records. Keep them here; they are never committed.
 endpoints/private/
 prompts/private/
+
+# Generated OWASP baseline pack: regenerate with `suite import --source garak`, never commit.
+prompts/baseline/

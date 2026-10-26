@@ -32,6 +32,8 @@ SMOKE_PACK = ROOT / "prompts" / "smoke"
 
 SMOKE_SUMMARY = "fail 1 · pass 100 · inconclusive 3 · needs_review 2"
 
+CANARY = "SYSTEM-CANARY-7Q4P"  # the lab bot's marker (see endpoints/lab-bot.yaml)
+
 
 def write_endpoint(
     tmp_path: Path,
@@ -490,6 +492,99 @@ def test_no_command_is_a_usage_error(capsys):
         main([])
     assert excinfo.value.code == 2
     assert "usage" in capsys.readouterr().err.lower()
+
+
+# --- import ----------------------------------------------------------------------------------
+
+
+def test_import_help_and_validate_stay_pyrit_free():
+    # Adding the import subcommand must not make the module (or validate) load PyRIT: only
+    # running the import itself does, and that import is lazy.
+    code = (
+        "import sys; from suite.cli import main\n"
+        "try:\n"
+        "    main(['import', '--help'])\n"
+        "except SystemExit:\n"
+        "    pass\n"
+        "main(['validate','--endpoint','endpoints/mock.yaml','--pack','prompts/smoke'])\n"
+        "print('PYRIT', 'pyrit' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, cwd=ROOT
+    ).stdout
+    assert "PYRIT False" in out
+    assert "--source" in out and "--canary" in out  # the import help did print
+
+
+def test_import_garak_writes_baseline(tmp_path, capsys):
+    out_dir = tmp_path / "b"
+    code = main(["import", "--source", "garak", "--out", str(out_dir), "--canary", CANARY])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert captured.err == ""
+    assert re.fullmatch(
+        rf"imported \d+ prompts across \d+ categories → {re.escape(str(out_dir))}\n",
+        captured.out,
+    )
+    assert (out_dir / "LLM07.yaml").is_file()
+    assert (out_dir / "COVERAGE.md").is_file()
+    pack = load_pack(out_dir)  # the folder is an ordinary pack
+    count, categories = re.fullmatch(
+        r"imported (\d+) prompts across (\d+) categories .*\n", captured.out
+    ).groups()
+    assert len(pack.prompts) == int(count)
+    assert len({p.category for p in pack.prompts}) == int(categories)
+
+
+def test_import_defaults_to_prompts_baseline_and_repeat_one():
+    args = cli._build_parser().parse_args(["import", "--source", "garak"])
+    assert args.out == Path("prompts/baseline")
+    assert args.canary is None
+    assert args.repeat == 1
+
+
+def test_cli_source_choice_matches_the_importer():
+    from suite import importer
+
+    assert cli.SOURCE_GARAK == importer.SOURCE_GARAK
+
+
+def test_import_unknown_source_exit_2(tmp_path, capsys):
+    with pytest.raises(SystemExit) as excinfo:  # argparse rejects it before any work
+        main(["import", "--source", "nope", "--out", str(tmp_path / "b")])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "error:" in err and "garak" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / "b").exists()
+
+
+def test_import_short_canary_is_a_clean_exit_2(tmp_path, capsys):
+    code = main(["import", "--source", "garak", "--out", str(tmp_path / "b"), "--canary", "ab"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.err.startswith("error:")
+    assert "Traceback" not in captured.err
+    assert captured.out == ""  # no summary line on failure
+    assert not (tmp_path / "b").exists()
+
+
+def test_import_unwritable_out_is_a_clean_exit_2(tmp_path, capsys):
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("a file where the output folder should go", encoding="utf-8")
+    code = main(["import", "--source", "garak", "--out", str(blocker), "--canary", CANARY])
+    captured = capsys.readouterr()
+    assert code == 2  # not 1: a path the user can fix is not an unexpected error
+    assert captured.err.startswith("error: cannot write to ")
+    assert "OSError" in captured.err or "Error" in captured.err
+    assert "unexpected" not in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+def test_baseline_dir_is_git_ignored():
+    ignored = subprocess.run(["git", "check-ignore", "-q", "prompts/baseline/x.yaml"], cwd=ROOT)
+    assert ignored.returncode == 0
 
 
 # --- shipped files ---------------------------------------------------------------------------

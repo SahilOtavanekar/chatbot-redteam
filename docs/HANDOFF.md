@@ -96,6 +96,11 @@ subset (baseline, gpt-is-password-encoded, gandalf-the-white).
    Gandalf packs, then run and document those validations (re-check the Gandalf API first).
 3. Then superpowers:finishing-a-development-branch: open a PR from `feat/v0.1` to `main`; merge
    after CI is green.
+4. **`feat/v0.2-importer` (importer Phase 1) is built but unpushed and needs its own PR.** It is
+   stacked on `feat/v0.1` (not yet merged to `main`), so merge or retarget in that order. The
+   baseline it generates is **LLM07 only**; coverage per category is stated in
+   `docs/validation/v0.2-importer.md`. Phase 2 (`package_hallucination`) is gated on vendoring the
+   registry reference sets (see that doc's spike section).
 
 ## Environment notes
 

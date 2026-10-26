@@ -7,6 +7,10 @@ engine tests a local bot today and an organisation chatbot later.
 
 **Status (2026-10-26): v0.1 built (Tasks 1–16 done, final review fixes applied); Tasks 17–18
 wait for Sahil's prompt text; branch `feat/v0.1` pushed, CI green.**
+**v0.2 importer Phase 1 is built and validated** on branch `feat/v0.2-importer` (stacked on
+`feat/v0.1`, **unpushed**, needs its own PR): `suite import --source garak` generates a git-ignored
+OWASP baseline that is **LLM07 only**, and `--pack` is repeatable. Details: `docs/HANDOFF.md`,
+`docs/validation/v0.2-importer.md`, spec `docs/specs/2026-10-26-v0.2-importer-design.md`.
 Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
 (see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
 Mock validation: `docs/validation/v0.1-mock.md`.

@@ -7,6 +7,8 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from suite.config import load_endpoint, masked
+from suite.evidence import read_run_json, write_run_json
 from suite.models import ConfigError, DecidedBy, Verdict
 from suite.prompts import OWASP_LLM_2025
 from suite.report import REVIEW_COLUMNS, VERDICT_LEGEND, verdict_label, write_reports
@@ -67,7 +69,10 @@ def test_api_publishes_an_openapi_schema_for_every_route(tmp_path):
 @pytest.mark.parametrize("module", ["api.py", "app.py"])
 def test_routers_reach_the_engine_only_through_the_service(module):
     source = (Path(service.__file__).parent / module).read_text(encoding="utf-8")
-    engine_imports = re.findall(r"^\s*(?:from|import)\s+suite\.(?!web\b)\w+", source, re.M)
+    # Catches ``from suite.x import ...``, ``import suite.x`` and the bare ``from suite import x``.
+    engine_imports = re.findall(
+        r"^\s*(?:(?:from|import)\s+suite\.(?!web\b)\w+|from\s+suite\s+import\b)", source, re.M
+    )
     assert engine_imports == []
 
 
@@ -99,7 +104,12 @@ def test_api_runs_is_an_empty_list_for_an_empty_or_missing_results_dir(tmp_path)
 
 def test_api_run_detail_carries_report_facts_and_legend(tmp_path):
     run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
-    body = _client(tmp_path).get(f"{API}/runs/{run.name}").json()
+    r = _client(tmp_path).get(f"{API}/runs/{run.name}")
+    body = r.json()
+    # The whole run.json is served, so the endpoint in it must already be masked: the factory's
+    # endpoint carries a bearer token, and no secret may reach the JSON surface.
+    assert "s3cret-token" not in r.text
+    assert body["report"]["run"]["endpoint"]["headers"] == {"Authorization": "***"}
     assert body["run_id"] == run.name
     assert body["legend"] == VERDICT_LEGEND
     assert body["report"]["final"] is False
@@ -107,6 +117,32 @@ def test_api_run_detail_carries_report_facts_and_legend(tmp_path):
     assert body["report"]["prompts"][0]["prompt_id"] == "P-1"
     assert body["report"]["prompts"][0]["verdict"] == "pass"
     assert body["facts"]  # the header facts, as [label, value] pairs
+
+
+def test_api_never_serves_a_value_substituted_for_an_env_variable(tmp_path):
+    # Mirrors what ``suite run`` stores: ``masked(spec)`` of the loaded spec, whose url carries a
+    # ${VAR} value. If a change ever wrote the endpoint unmasked, this secret would leak.
+    secret = "k-9f3a-hunter2"
+    endpoint_file = tmp_path / "endpoint.yaml"
+    endpoint_file.write_text(
+        "name: t\ntype: http\nauthorized: test\n"
+        "url: http://127.0.0.1:9/chat?key=${API_KEY}\n"
+        'body: {message: "{prompt}"}\n',
+        encoding="utf-8",
+    )
+    spec = load_endpoint(endpoint_file, env={"API_KEY": secret})
+    assert secret in spec.url  # the secret really is in the loaded spec
+    results = tmp_path / "results"
+    run = make_run_dir(results, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    record = read_run_json(run)
+    record["endpoint"] = masked(spec)
+    write_run_json(run, record)
+
+    c = _client(results)
+    for path in ("/runs", f"/runs/{run.name}", f"/runs/{run.name}/coverage"):
+        assert secret not in c.get(f"{API}{path}").text, path
+    body = c.get(f"{API}/runs/{run.name}").json()
+    assert body["report"]["run"]["endpoint"]["url"] == "http://127.0.0.1:9/chat?key=***"
 
 
 def test_api_run_coverage_has_one_row_per_owasp_category(tmp_path):

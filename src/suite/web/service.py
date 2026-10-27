@@ -5,6 +5,8 @@ hands back plain data, so the views never touch SQLite or ``run.json`` directly.
 from a URL, so it is untrusted: ``resolve_run_dir`` is the only way to turn one into a path.
 """
 
+import csv
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,10 +16,21 @@ from suite.compare import Change, CompareRow, compare_runs
 from suite.evidence import read_run_json
 from suite.models import ConfigError
 from suite.prompts import OWASP_LLM_2025
-from suite.report import VERDICT_LEGEND, ReportData, build_report_data, run_facts
+from suite.report import (
+    REVIEW_COLUMNS,
+    VERDICT_LEGEND,
+    ReportData,
+    build_report_data,
+    run_facts,
+)
 from suite.web.settings import WebSettings
 
 UNREADABLE = "unreadable"
+
+# csv's default field limit is 128 KB, and a full reply can be longer. The limit is process-wide
+# state, so reads that raise it take this lock: one thread must not restore it under another.
+_CSV_LIMIT = 2**31 - 1
+_csv_limit_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -71,6 +84,25 @@ class CompareView:
     run_id: str
     rows: list[CompareRow]
     counts: dict[str, int]
+
+
+@dataclass(frozen=True)
+class ReviewItem:
+    """One attempt in a run's review queue, as a row of ``review.csv``.
+
+    ``reply`` is the full redacted reply, not an excerpt. ``verdict`` and ``note`` are blank until
+    a reviewer fills them in.
+    """
+
+    attempt_id: str
+    prompt_id: str
+    category: str
+    hint: str
+    pass_if: str
+    prompt: str
+    reply: str
+    verdict: str
+    note: str
 
 
 def resolve_run_dir(settings: WebSettings, run_id: str) -> Path | None:
@@ -201,3 +233,28 @@ def _load_report(settings: WebSettings, run_id: str) -> ReportData | None:
         return build_report_data(run_dir, final=final)
     except ConfigError:  # run.json or evidence.db missing or unreadable
         return None
+
+
+def review_queue(settings: WebSettings, run_id: str) -> list[ReviewItem] | None:
+    """Return the attempts a person must judge, from the run's ``review.csv``.
+
+    The file is the draft queue ``suite run`` writes. A run with no ``review.csv`` has an empty
+    queue (``[]``), and an unknown or unsafe ``run_id`` is ``None``. Rows come back in file order
+    and a missing column reads as an empty string.
+    """
+    run_dir = resolve_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    path = run_dir / "review.csv"
+    if not path.is_file():
+        return []
+    with _csv_limit_lock:
+        previous = csv.field_size_limit(_CSV_LIMIT)
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as handle:
+                return [
+                    ReviewItem(**{column: row.get(column) or "" for column in REVIEW_COLUMNS})
+                    for row in csv.DictReader(handle)
+                ]
+        finally:
+            csv.field_size_limit(previous)

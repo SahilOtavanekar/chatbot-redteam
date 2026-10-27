@@ -1,11 +1,21 @@
 """Tests for the web layer's settings, run discovery and path-safe run resolution."""
 
+import csv
+
 import pytest
 
 from suite.evidence import read_run_json, write_run_json
 from suite.models import Verdict
 from suite.prompts import OWASP_LLM_2025
-from suite.web.service import compare, coverage, get_run, list_runs, resolve_run_dir
+from suite.report import write_reports
+from suite.web.service import (
+    compare,
+    coverage,
+    get_run,
+    list_runs,
+    resolve_run_dir,
+    review_queue,
+)
 from suite.web.settings import WebSettings
 from tests.factories import make_run_dir
 
@@ -207,3 +217,40 @@ def test_compare_rows_and_every_change_is_counted(tmp_path):
         "new": 1,
         "removed": 1,
     }
+
+
+def test_review_queue_reads_full_reply(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "a long reply ...")])
+    write_reports(run, final=False)  # writes review.csv
+    items = review_queue(WebSettings(results_dir=tmp_path), run.name)
+    assert len(items) == 1 and items[0].attempt_id == "P-1#1"
+    assert items[0].reply == "a long reply ..." and items[0].verdict == ""
+
+
+def test_review_queue_empty_without_file(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    assert review_queue(WebSettings(results_dir=tmp_path), run.name) == []
+
+
+def test_review_queue_none_for_unknown_or_unsafe_run(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "x")])
+    write_reports(run, final=False)
+    settings = WebSettings(results_dir=tmp_path)
+    assert review_queue(settings, "no-such-run") is None
+    assert review_queue(settings, "../" + run.name) is None
+
+
+def test_review_queue_keeps_replies_longer_than_the_default_csv_field_limit(tmp_path):
+    long_reply = "x" * (csv.field_size_limit() + 1000)
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, long_reply)])
+    write_reports(run, final=False)
+    items = review_queue(WebSettings(results_dir=tmp_path), run.name)
+    assert items is not None and items[0].reply == long_reply
+
+
+def test_review_queue_restores_the_csv_field_limit(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "x")])
+    write_reports(run, final=False)
+    before = csv.field_size_limit()
+    review_queue(WebSettings(results_dir=tmp_path), run.name)
+    assert csv.field_size_limit() == before

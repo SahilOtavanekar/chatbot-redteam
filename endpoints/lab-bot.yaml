@@ -1,0 +1,6 @@
+name: lab-bot
+type: http
+authorized: "owned local target (ai-red-teaming lab bot)"
+url: http://127.0.0.1:8000/chat
+body: { user_id: "alice", message: "{prompt}" }
+limits: { concurrency: 4, requests_per_minute: 120, timeout_s: 120, max_requests: 500 }

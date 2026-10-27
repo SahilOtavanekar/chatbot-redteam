@@ -1,0 +1,9 @@
+name: gandalf-mid
+type: gandalf
+level: gpt-is-password-encoded
+authorized: "Lakera Gandalf — public, purpose-built challenge"
+# max_retries 0: PyRIT's GandalfTarget already retries every request once itself (2 attempts,
+# 1 s apart), outside our rate limiter and request budget, so an engine retry would only add
+# unbudgeted requests to a public service.
+limits: { concurrency: 2, requests_per_minute: 20, timeout_s: 60, max_requests: 100,
+          max_retries: 0 }

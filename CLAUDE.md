@@ -5,9 +5,24 @@ chatbot API **in parallel**, judges each reply deterministically, queues the res
 review, and generates an OWASP-aligned report. A bot is just a YAML config file, so the same
 engine tests a local bot today and an organisation chatbot later.
 
-**Status (2026-10-23): spec approved; implementation plan awaiting approval; no code yet.** Read
-`docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
-(see §16). Plan: `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
+**Status (2026-10-26): v0.1 built (Tasks 1–16 done, final review fixes applied); Tasks 17–18
+wait for Sahil's prompt text; branch `feat/v0.1` pushed, CI green.**
+Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
+(see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
+Mock validation: `docs/validation/v0.1-mock.md`.
+
+## How to resume the build (next session)
+
+1. `git switch feat/v0.1` (should already be checked out); `uv sync`; `uv run pytest -q` → expect
+   655 passed, 1 deselected (the live Gandalf test) on Python 3.13 (`.python-version` pins it).
+2. The build runs with **superpowers:subagent-driven-development** (Sahil's choice). Its ledger is
+   `.superpowers/sdd/2026-10-23-chatbot-redteam-v0.1/progress.md` — **git-ignored, local only**.
+   Read it first: it has every ruling and deferred minor. Trust the ledger + `git log` over memory;
+   never re-dispatch a task marked `complete`.
+3. Next action: Tasks 17–18, once Sahil supplies the prompt text (Claude transcribes it verbatim;
+   re-check the Gandalf API before Task 18). Then superpowers:finishing-a-development-branch: open
+   a PR from `feat/v0.1` to `main`, merge after CI is green.
+4. Sahil may first want to review progress; summarise from the ledger, don't re-run tasks.
 
 This project was split out of the `ai-red-teaming` lab (at `C:\dev\ai-red-teaming`). The lab's
 deliberately vulnerable bot is this framework's first owned test target.
@@ -39,32 +54,39 @@ deliberately vulnerable bot is this framework's first owned test target.
   10, NIST AI 600-1).
 - Work on a branch; open a PR; merge after CI is green. Check ports before starting a server.
 
-## Planned layout (not built yet — see the spec)
+## Layout (✔ = built; full map in the plan's "File map")
 
 ```
-src/suite/   config, adapters(PyRIT), prompts, engine, judge, evidence, report, review, compare, cli
-endpoints/   one YAML per bot (lab-bot, gandalf, <org-bot> later)
-prompts/     prompt packs (YAML/CSV); Sahil authors the prompt text
-results/     git-ignored run folders (run.json, memory.db, matrix.csv, report.*, review.csv)
-tests/       pytest, one suite per component
-docs/        specs/, HANDOFF.md, pyrit-analysis.md, pyrit-spike-findings.md
+src/suite/   ✔ models, config, prompts, patterns, planner, extract, engine, judge,
+             adapters/ (only PyRIT importer), evidence, report, run, review, compare, cli
+endpoints/   ✔ one YAML per bot (mock, lab-bot, gandalf-baseline/-mid/-hardest);
+             private/ subdir git-ignored
+prompts/     ✔ prompt packs (YAML/CSV): smoke (for the mock); lab-bot and Gandalf packs wait for
+             Sahil's text (Tasks 17–18); private/ subdir git-ignored
+results/     git-ignored run folders (run.json, evidence.db, matrix.csv, report.*, review.csv)
+tests/       ✔ pytest, one suite per component (+ mockbot.py, factories.py, fakes.py)
+docs/        specs/, superpowers/plans/, HANDOFF.md, pyrit-*.md, validation/ (v0.1-mock.md)
 ```
 
-## Commands (once scaffolded)
+Decided 2026-10-23: v0.2 UI = **FastAPI + HTMX + Jinja2** with a JSON API (`/api/v1`) underneath, so
+a FastAPI + React frontend can replace the views later (spec §16.6). Not Streamlit, not CoPyRIT.
+
+## Commands
 
 ```bash
 uv sync
-uv run pytest
-uv run ruff check . && uv run ruff format .
-uv run mypy src
-# planned CLI:
-uv run suite validate --endpoint endpoints/lab-bot.yaml --pack prompts/core
-uv run suite run      --endpoint endpoints/lab-bot.yaml --pack prompts/core
+uv run pytest -q
+uv run ruff check . && uv run ruff format --check .
+uv run mypy
+# CLI against the local mock bot. Check port 8199 is free first, then in another terminal:
+uv run python tests/mockbot.py --port 8199
+uv run suite validate --endpoint endpoints/mock.yaml --pack prompts/smoke   # sends nothing
+uv run suite run      --endpoint endpoints/mock.yaml --pack prompts/smoke
 uv run suite finalize --run results/<run-id>
 uv run suite compare  --baseline results/<r1> --run results/<r2>
 ```
 
 ## Next step
 
-Sahil approves the plan (and spec §16 revisions) and picks an execution method → build v0.1 with
-TDD, task by task, validating against mock + lab bot + Gandalf.
+Tasks 17–18 once Sahil supplies the prompt text, then finishing-a-development-branch (PR) — see
+"How to resume" above.

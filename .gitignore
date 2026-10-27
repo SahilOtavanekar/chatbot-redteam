@@ -20,3 +20,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Org-bot files (endpoint YAMLs and prompt packs): may hold internal names, URLs or planted
+# test records. Keep them here; they are never committed.
+endpoints/private/
+prompts/private/

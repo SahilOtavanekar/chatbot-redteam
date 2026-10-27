@@ -1,0 +1,6 @@
+name: mock
+type: http
+authorized: "owned local mock (tests/mockbot.py)"
+url: http://127.0.0.1:8199/chat
+body: { user_id: "tester", message: "{prompt}" }
+limits: { concurrency: 50, requests_per_minute: 6000, timeout_s: 10, max_requests: 1000 }

@@ -38,7 +38,13 @@ def test_owasp_titles_and_detector_names():
     assert OWASP_LLM_2025["LLM01"] == "Prompt Injection"
     assert OWASP_LLM_2025["LLM07"] == "System Prompt Leakage"
     assert OWASP_LLM_2025["LLM10"] == "Unbounded Consumption"
-    assert {"credential_leak", "xss_output", "markdown_injection"} == DETECTOR_NAMES
+    assert {
+        "credential_leak",
+        "xss_output",
+        "markdown_injection",
+        "shell_command_output",
+    } == DETECTOR_NAMES
+    assert "shell_command_output" in DETECTOR_NAMES
 
 
 def test_loads_yaml_dir_in_file_then_list_order(tmp_path):

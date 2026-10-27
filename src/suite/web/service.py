@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from suite.compare import Change, CompareRow, compare_runs
 from suite.evidence import read_run_json
 from suite.models import ConfigError
 from suite.prompts import OWASP_LLM_2025
@@ -56,6 +57,20 @@ class CoverageRow:
     name: str
     present: bool
     prompt_count: int
+
+
+@dataclass(frozen=True)
+class CompareView:
+    """Two runs compared prompt by prompt: the rows, and how many prompts had each change.
+
+    ``counts`` has one entry per ``Change`` value (``fixed``, ``regressed``, ``unchanged``,
+    ``unclear``, ``new``, ``removed``), zero included, so a view can read any of them directly.
+    """
+
+    baseline_id: str
+    run_id: str
+    rows: list[CompareRow]
+    counts: dict[str, int]
 
 
 def resolve_run_dir(settings: WebSettings, run_id: str) -> Path | None:
@@ -155,6 +170,26 @@ def coverage(settings: WebSettings, run_id: str) -> list[CoverageRow] | None:
         CoverageRow(code, name, counts[code] > 0, counts[code])
         for code, name in OWASP_LLM_2025.items()
     ]
+
+
+def compare(settings: WebSettings, baseline_id: str, run_id: str) -> CompareView | None:
+    """Compare ``run_id`` against ``baseline_id``, or return ``None`` if that cannot be done.
+
+    Both ids go through ``resolve_run_dir``, so an unknown or unsafe id on either side is
+    ``None``. So is a pair the engine refuses: the same run twice, or a folder without readable
+    evidence. Both runs are read as final reports, as ``suite compare`` does.
+    """
+    baseline_dir = resolve_run_dir(settings, baseline_id)
+    run_dir = resolve_run_dir(settings, run_id)
+    if baseline_dir is None or run_dir is None:
+        return None
+    try:
+        rows = compare_runs(baseline_dir, run_dir)
+    except ConfigError:  # same folder, or run.json / evidence.db missing or unreadable
+        return None
+    tally = Counter(row.change.value for row in rows)
+    counts = {change.value: tally[change.value] for change in Change}
+    return CompareView(baseline_id, run_id, rows, counts)
 
 
 def _load_report(settings: WebSettings, run_id: str) -> ReportData | None:

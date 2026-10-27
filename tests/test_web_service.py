@@ -5,7 +5,7 @@ import pytest
 from suite.evidence import read_run_json, write_run_json
 from suite.models import Verdict
 from suite.prompts import OWASP_LLM_2025
-from suite.web.service import coverage, get_run, list_runs, resolve_run_dir
+from suite.web.service import compare, coverage, get_run, list_runs, resolve_run_dir
 from suite.web.settings import WebSettings
 from tests.factories import make_run_dir
 
@@ -142,3 +142,68 @@ def test_coverage_counts_prompts_not_attempts(tmp_path):
     rows = {r.code: r for r in coverage(WebSettings(results_dir=tmp_path), run.name)}
     assert (rows["LLM07"].prompt_count, rows["LLM05"].prompt_count) == (2, 1)
     assert rows["LLM01"].prompt_count == 0 and rows["LLM07"].name == OWASP_LLM_2025["LLM07"]
+
+
+def test_compare_counts_changes(tmp_path):
+    base = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.FAIL, "leak")])
+    cur = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    view = compare(WebSettings(results_dir=tmp_path), base.name, cur.name)
+    assert view.counts["fixed"] == 1
+
+
+def test_compare_none_for_missing_side(tmp_path):
+    cur = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    assert compare(WebSettings(results_dir=tmp_path), "nope", cur.name) is None
+    assert compare(WebSettings(results_dir=tmp_path), cur.name, "nope") is None
+
+
+def test_compare_none_for_the_same_run(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    assert compare(WebSettings(results_dir=tmp_path), run.name, run.name) is None
+
+
+def test_compare_none_for_unsafe_id(tmp_path):
+    cur = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    assert compare(WebSettings(results_dir=tmp_path), "../" + cur.name, cur.name) is None
+
+
+def test_compare_none_when_a_side_has_no_evidence(tmp_path):
+    cur = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    (tmp_path / "bare").mkdir()
+    (tmp_path / "bare" / "run.json").write_text("{}", encoding="utf-8")
+    assert compare(WebSettings(results_dir=tmp_path), "bare", cur.name) is None
+
+
+def test_compare_rows_and_every_change_is_counted(tmp_path):
+    base = make_run_dir(
+        tmp_path,
+        [
+            ("P-1#1", "LLM07", Verdict.FAIL, "leak"),
+            ("P-2#1", "LLM07", Verdict.PASS, "ok"),
+            ("P-3#1", "LLM05", Verdict.PASS, "ok"),
+        ],
+    )
+    cur = make_run_dir(
+        tmp_path,
+        [
+            ("P-1#1", "LLM07", Verdict.PASS, "ok"),
+            ("P-2#1", "LLM07", Verdict.FAIL, "leak"),
+            ("P-4#1", "LLM06", Verdict.PASS, "ok"),
+        ],
+    )
+    view = compare(WebSettings(results_dir=tmp_path), base.name, cur.name)
+    assert (view.baseline_id, view.run_id) == (base.name, cur.name)
+    assert {row.prompt_id: row.change.value for row in view.rows} == {
+        "P-1": "fixed",
+        "P-2": "regressed",
+        "P-4": "new",
+        "P-3": "removed",
+    }
+    assert view.counts == {
+        "fixed": 1,
+        "regressed": 1,
+        "unchanged": 0,
+        "unclear": 0,
+        "new": 1,
+        "removed": 1,
+    }

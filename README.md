@@ -60,15 +60,19 @@ uv run suite compare  --baseline results/<run-1> --run results/<run-2>      # fi
 - A run that **aborts** (too many consecutive errors, `abort_after_errors`) still exits 0, with a
   `warning:` line on stderr; its unsent attempts show as Inconclusive in the report, never as Pass.
 
-### OWASP baseline import (v0.2, Phase 1)
+### OWASP baseline import (v0.2 Phase 1, extended in v0.3 Phase A)
 
 `suite import` builds a baseline prompt pack from garak's probe prompts (loaded through PyRIT from
-a bundled local file) instead of you writing a pack by hand. Phase 1 imports garak's
-`system_prompt_extraction` set, filed under OWASP **LLM07** (System Prompt Leakage). **Phase 1 is
-LLM07 only, not broad OWASP coverage**: LLM02 is an auxiliary credential-leak check on the same
-prompts, LLM01 is exercised but judged as LLM07, LLM09 / LLM05 / LLM06 arrive in later phases, and
-LLM03 / LLM04 / LLM08 / LLM10 are not covered by single-turn reply judging (per-category reasons in
-the [validation doc](docs/validation/v0.2-importer.md#coverage-of-the-phase-1-baseline-mirrors-spec-sections-1-and-5)):
+a bundled local file) instead of you writing a pack by hand. The baseline now covers OWASP
+**LLM05** (Improper Output Handling: XSS-style and markdown-exfiltration payloads), **LLM06**
+(Excessive Agency, **partial**: only dangerous shell payloads in the reply are caught, not ordinary
+command output) and **LLM07** (System Prompt Leakage, from garak's `system_prompt_extraction` set).
+The payloads are sent as-is, so a Pass is not proof of safety. This is **not broad OWASP coverage**:
+LLM02 is an auxiliary credential-leak check on the LLM07 prompts, LLM01 is exercised but judged as
+LLM07, LLM09 arrives in a later phase, and LLM03 / LLM04 / LLM08 / LLM10 are not covered by
+single-turn reply judging (per-category reasons in
+the [validation doc](docs/validation/v0.2-importer.md#coverage-of-the-phase-1-baseline-mirrors-spec-sections-1-and-5);
+Phase A validation: [`docs/validation/v0.3-phase-a.md`](docs/validation/v0.3-phase-a.md)):
 
 ```bash
 uv run suite import --source garak --out prompts/baseline --canary SYSTEM-CANARY-7Q4P
@@ -77,14 +81,16 @@ uv run suite run      --endpoint endpoints/lab-bot.yaml --pack prompts/baseline
 ```
 
 - `--canary` is the marker your bot must never reveal; it becomes a fixed must-not-contain check on
-  every prompt of a canary-opted dataset (the dataset opts in: all 28 extraction prompts in Phase 1).
-  Prompts with no rule route to human review, never to Pass.
-- Output is `prompts/baseline/LLM07.yaml` plus `prompts/baseline/COVERAGE.md`, which lists which
-  OWASP LLM categories the baseline covers and which it does not (the same statement is committed
-  in the validation doc, since `COVERAGE.md` is generated). The folder is **git-ignored**
-  (regenerate it, don't edit it); the same inputs produce byte-identical files. Re-running
-  `suite import` into a non-empty `--out` does **not** prune stale files: if the category set ever
-  shrinks, delete `prompts/baseline/` before regenerating (Phase 1 has one category, so it can't).
+  every prompt of a canary-opted dataset (only the LLM07 extraction dataset opts in; the LLM05/06
+  prompts are judged by their own output detectors instead). Prompts with no rule route to human
+  review, never to Pass.
+- Output is `prompts/baseline/LLM05.yaml`, `LLM06.yaml` and `LLM07.yaml` plus
+  `prompts/baseline/COVERAGE.md`, which lists which OWASP LLM categories the baseline covers and
+  which it does not (the same statement is committed in the validation doc, since `COVERAGE.md` is
+  generated). The folder is **git-ignored** (regenerate it, don't edit it); the same inputs produce
+  byte-identical files. `suite import` prunes stale generated files on re-import: it removes
+  `LLM<nn>.yaml` and `COVERAGE.md` files in `--out` that this run did not write, and leaves any
+  other file alone.
 - `--pack` is repeatable, so a baseline composes with your own prompts (prompt ids must differ):
   `--pack prompts/baseline --pack prompts/private/my-bot`.
 - Validation record: [`docs/validation/v0.2-importer.md`](docs/validation/v0.2-importer.md).

@@ -1,4 +1,4 @@
-"""The ``suite`` command line: validate, run, finalize, compare, import.
+"""The ``suite`` command line: validate, run, finalize, compare, import, web.
 
 Each subcommand is a thin shell over one component; the work lives elsewhere and nothing here
 decides a verdict. Exit codes: 0 ok, 2 for a problem the user can fix (a bad input file, a
@@ -7,11 +7,13 @@ failed preflight, a bad argument), 1 for anything unexpected, 130 for Ctrl+C. Er
 
 ``suite.adapters`` imports PyRIT (slow, and it creates files under the user's profile), so it
 is imported only inside ``run``, and ``suite.importer`` (which reaches it) only inside ``import``.
-``validate``, ``finalize`` and ``compare`` never load it.
+``validate``, ``finalize`` and ``compare`` never load it. Likewise ``suite.web`` and ``uvicorn``
+are imported only inside ``web``.
 """
 
 import argparse
 import asyncio
+import socket
 import sys
 from collections import Counter
 from collections.abc import Sequence
@@ -34,6 +36,8 @@ EXIT_INTERRUPTED = 130
 
 DEFAULT_RESULTS_DIR = Path("results")
 DEFAULT_BASELINE_DIR = Path("prompts/baseline")
+DEFAULT_WEB_HOST = "127.0.0.1"  # loopback: the UI has no login, so it is local-only by default
+DEFAULT_WEB_PORT = 8787
 SOURCE_GARAK = "garak"  # the one import source; suite.importer (lazy, loads PyRIT) is the authority
 
 # The order of the run summary line.
@@ -135,6 +139,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="send each prompt this many times (default: %(default)s)",
     )
     import_.set_defaults(handler=_cmd_import)
+
+    web = commands.add_parser(
+        "web", help="serve the local web UI over the run folders in --results-dir"
+    )
+    web.add_argument(
+        "--results-dir",
+        type=Path,
+        default=DEFAULT_RESULTS_DIR,
+        help="the folder that holds the run folders (default: %(default)s)",
+    )
+    web.add_argument(
+        "--host",
+        default=DEFAULT_WEB_HOST,
+        help="the address to listen on; anything but the default exposes the UI, which has no "
+        "login (default: %(default)s)",
+    )
+    web.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_WEB_PORT,
+        help="the port to listen on (default: %(default)s)",
+    )
+    web.set_defaults(handler=_cmd_web)
     return parser
 
 
@@ -239,6 +266,44 @@ def _cmd_import(args: argparse.Namespace) -> int:
     count = len(result.categories)
     noun = "category" if count == 1 else "categories"
     print(f"imported {result.prompt_count} prompts across {count} {noun} → {result.out_dir}")
+    return EXIT_OK
+
+
+def _port_free(host: str, port: int) -> bool:
+    """Whether ``host:port`` can be bound right now (the socket is closed again at once)."""
+    try:
+        family, socktype, proto, _canon, address = socket.getaddrinfo(
+            host, port, type=socket.SOCK_STREAM
+        )[0]
+        with socket.socket(family, socktype, proto) as probe:
+            # No SO_REUSEADDR on Windows: there it lets a second socket share a live port, which
+            # would hide a busy one. Elsewhere asyncio (so uvicorn) sets it, and so must we, or a
+            # port in TIME_WAIT would look busy.
+            if sys.platform != "win32":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(address)
+    except OSError:
+        return False
+    return True
+
+
+def _cmd_web(args: argparse.Namespace) -> int:
+    # Imported here, not at the top: the other commands never load the web stack.
+    import uvicorn
+
+    from suite.web.app import create_app
+    from suite.web.settings import WebSettings
+
+    settings = WebSettings(results_dir=args.results_dir, host=args.host, port=args.port)
+    if not _port_free(settings.host, settings.port):
+        raise ConfigError(f"port {settings.port} on {settings.host} is already in use")
+    if settings.host != DEFAULT_WEB_HOST:
+        print(
+            f"warning: listening on {settings.host}; the web UI has no login, so anyone who can "
+            "reach this address can read and change the runs",
+            file=sys.stderr,
+        )
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
     return EXIT_OK
 
 

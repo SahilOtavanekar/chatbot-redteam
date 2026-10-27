@@ -365,6 +365,39 @@ def test_set_verdict_rejects_without_touching_the_file(tmp_path):
     assert path.read_bytes() == before
 
 
+def test_set_verdict_rejects_a_blank_attempt_id_and_writes_nothing(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    rows = _cells(path)
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:  # a stray blank row
+        csv.writer(handle).writerows([*rows, [""] * len(REVIEW_COLUMNS)])
+    before = path.read_bytes()
+    s = WebSettings(results_dir=tmp_path)
+    assert review_queue(s, run.name)[1].attempt_id == ""  # the UI can be handed this row
+    for attempt_id in ("", "   "):
+        write = set_review_verdict(s, run.name, attempt_id, "pass", "x")
+        assert not write.ok and write.item is None and write.error
+    assert path.read_bytes() == before  # no phantom verdict that would block finalize
+    assert finalize_run(s, run.name).ok
+
+
+def test_set_verdict_accepts_the_padded_attempt_id_the_queue_returns(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    rows = _cells(path)
+    rows[1][0] = " P-1#1 "  # a hand-padded cell the engine still matches
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        csv.writer(handle).writerows(rows)
+    s = WebSettings(results_dir=tmp_path)
+    shown = review_queue(s, run.name)[0].attempt_id
+    assert shown == " P-1#1 "
+    assert set_review_verdict(s, run.name, shown, "pass", "").ok
+    assert review_queue(s, run.name)[0].verdict == "pass"
+    assert finalize_run(s, run.name).applied == 1
+
+
 def test_set_verdict_fails_cleanly_for_unknown_run_or_missing_file(tmp_path):
     run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])  # no review.csv
     s = WebSettings(results_dir=tmp_path)

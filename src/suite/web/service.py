@@ -306,6 +306,11 @@ def set_review_verdict(
     word = verdict.lower()
     if word not in _REVIEW_VERDICTS:
         return VerdictWrite(False, None, "verdict must be pass, fail or blank")
+    # Trimmed on both sides, as ``suite finalize`` matches it: a padded cell the queue hands back
+    # still matches, and a blank id never matches the blank rows a sheet can hold.
+    attempt_id = attempt_id.strip()
+    if not attempt_id:
+        return VerdictWrite(False, None, f"attempt not found in {REVIEW_CSV}")
     run_dir = resolve_run_dir(settings, run_id)
     if run_dir is None:
         return VerdictWrite(False, None, "run not found")

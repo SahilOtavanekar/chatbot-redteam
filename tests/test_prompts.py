@@ -10,6 +10,7 @@ from suite.prompts import (
     Checks,
     Prompt,
     load_pack,
+    load_packs,
 )
 from tests.factories import make_pack, make_prompt
 
@@ -136,6 +137,63 @@ def test_duplicate_id_within_one_file_is_rejected(tmp_path):
     path = write_prompts(tmp_path, "a.yaml", item("X-1"), item("X-1"))
     with pytest.raises(ConfigError, match=r"X-1.*twice.*a\.yaml"):
         load_pack(path)
+
+
+# --- several packs merged ----------------------------------------------------------------------
+
+
+def make_pack_dir(tmp_path: Path, name: str, *items: dict) -> Path:
+    pack_dir = tmp_path / name
+    pack_dir.mkdir()
+    write_prompts(pack_dir, "prompts.yaml", *items)
+    return pack_dir
+
+
+def test_load_packs_merges_in_order(tmp_path):
+    first = make_pack_dir(tmp_path, "first", item("A2"), item("A1"))
+    second = make_pack_dir(tmp_path, "second", item("B1"))
+    third = write_prompts(tmp_path, "third.yaml", item("C1"), item("C2"))
+    pack = load_packs([first, second, third])
+    assert [p.id for p in pack.prompts] == ["A2", "A1", "B1", "C1", "C2"]
+    assert pack.name == f"{first}+{second}+{third}"
+    # Argument order decides the prompt order, not the path names.
+    assert [p.id for p in load_packs([second, first]).prompts] == ["B1", "A2", "A1"]
+
+
+def test_load_packs_with_one_path_is_load_pack(tmp_path):
+    folder = make_pack_dir(tmp_path, "only", item("A1"), item("A2", repeat=3))
+    assert load_packs([folder]) == load_pack(folder)
+    assert load_packs([folder]).name == "only"
+
+
+def test_duplicate_id_across_packs_is_rejected(tmp_path):
+    a = make_pack_dir(tmp_path, "a", item("OK-1"), item("DUP-1"))
+    b = make_pack_dir(tmp_path, "b", item("OK-2"), item("DUP-1"))
+    with pytest.raises(ConfigError, match="DUP-1") as caught:
+        load_packs([a, b])
+    message = str(caught.value)
+    assert str(a) in message and str(b) in message
+
+
+def test_the_same_pack_given_twice_is_a_duplicate_not_a_silent_double_run(tmp_path):
+    a = make_pack_dir(tmp_path, "a", item("X-1"))
+    with pytest.raises(ConfigError, match="X-1.*more than once"):
+        load_packs([a, a])
+
+
+def test_load_packs_still_reports_a_problem_inside_one_pack(tmp_path):
+    good = make_pack_dir(tmp_path, "good", item("G-1"))
+    bad = make_pack_dir(tmp_path, "bad", item("B-1", category="LLM11"))
+    with pytest.raises(ConfigError, match=r"bad.*'B-1'.*LLM11"):
+        load_packs([good, bad])
+    within = make_pack_dir(tmp_path, "within", item("W-1"), item("W-1"))
+    with pytest.raises(ConfigError, match=r"W-1.*twice"):
+        load_packs([good, within])
+
+
+def test_load_packs_needs_at_least_one_path():
+    with pytest.raises(ConfigError, match="no prompt pack"):
+        load_packs([])
 
 
 @pytest.mark.parametrize(

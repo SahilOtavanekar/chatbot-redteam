@@ -1,4 +1,4 @@
-"""The ``suite`` command line: validate, run, finalize, compare.
+"""The ``suite`` command line: validate, run, finalize, compare, import.
 
 Each subcommand is a thin shell over one component; the work lives elsewhere and nothing here
 decides a verdict. Exit codes: 0 ok, 2 for a problem the user can fix (a bad input file, a
@@ -6,7 +6,8 @@ failed preflight, a bad argument), 1 for anything unexpected, 130 for Ctrl+C. Er
 ``error: ...`` line on stderr, with no traceback.
 
 ``suite.adapters`` imports PyRIT (slow, and it creates files under the user's profile), so it
-is imported only inside ``run``. ``validate``, ``finalize`` and ``compare`` never load it.
+is imported only inside ``run``, and ``suite.importer`` (which reaches it) only inside ``import``.
+``validate``, ``finalize`` and ``compare`` never load it.
 """
 
 import argparse
@@ -22,7 +23,7 @@ from suite.engine import RateLimiter
 from suite.evidence import read_run_json
 from suite.models import ConfigError, Verdict
 from suite.planner import PreflightReport, format_preflight, preflight
-from suite.prompts import Pack, load_pack
+from suite.prompts import Pack, load_packs
 from suite.review import finalize
 from suite.run import execute_run
 
@@ -32,6 +33,8 @@ EXIT_USER_ERROR = 2
 EXIT_INTERRUPTED = 130
 
 DEFAULT_RESULTS_DIR = Path("results")
+DEFAULT_BASELINE_DIR = Path("prompts/baseline")
+SOURCE_GARAK = "garak"  # the one import source; suite.importer (lazy, loads PyRIT) is the authority
 
 # The order of the run summary line.
 _SUMMARY_ORDER = (Verdict.FAIL, Verdict.PASS, Verdict.INCONCLUSIVE, Verdict.NEEDS_REVIEW)
@@ -102,18 +105,54 @@ def _build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--baseline", type=Path, required=True, help="the earlier run folder")
     compare.add_argument("--run", type=Path, required=True, help="the newer run folder")
     compare.set_defaults(handler=_cmd_compare)
+
+    import_ = commands.add_parser(
+        "import",
+        help="build the OWASP baseline pack (git-ignored) from the garak prompt dataset",
+    )
+    import_.add_argument(
+        "--source",
+        required=True,
+        choices=[SOURCE_GARAK],
+        help="the dataset to import",
+    )
+    import_.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_BASELINE_DIR,
+        help="the pack folder to write (default: %(default)s)",
+    )
+    import_.add_argument(
+        "--canary",
+        default=None,
+        help="the marker your bot must never reveal; becomes a must_not_contain check "
+        "on the prompts that ask for it (default: none)",
+    )
+    import_.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="send each prompt this many times (default: %(default)s)",
+    )
+    import_.set_defaults(handler=_cmd_import)
     return parser
 
 
 def _add_endpoint_and_pack(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--endpoint", type=Path, required=True, help="endpoint YAML file")
-    parser.add_argument("--pack", type=Path, required=True, help="prompt pack folder or file")
+    parser.add_argument(
+        "--pack",
+        type=Path,
+        action="append",
+        required=True,
+        help="prompt pack folder or file; repeat to merge several packs (prompt ids must differ)",
+    )
 
 
 def _plan(args: argparse.Namespace) -> tuple[EndpointSpec, Pack, PreflightReport]:
-    """Load the endpoint and pack, and print the preflight report (stdout)."""
+    """Load the endpoint and pack(s), and print the preflight report (stdout)."""
     spec = load_endpoint(args.endpoint)
-    pack = load_pack(args.pack)
+    pack = load_packs(args.pack)
     report = preflight(spec, pack)
     print(format_preflight(report, spec))
     return spec, pack, report
@@ -136,8 +175,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not report.ok:
         return _refuse(report)
 
+    # run.json records one pack_path; several packs are joined with "+" like the merged pack's name.
+    pack_path = args.pack[0] if len(args.pack) == 1 else Path("+".join(map(str, args.pack)))
     try:
-        run_dir = asyncio.run(_run(spec, pack, args.pack, args.results_dir))
+        run_dir = asyncio.run(_run(spec, pack, pack_path, args.results_dir))
     except (KeyboardInterrupt, ConfigError):
         raise  # main prints these
     except Exception as exc:
@@ -183,6 +224,22 @@ async def _run(spec: EndpointSpec, pack: Pack, pack_path: Path, results_dir: Pat
         )
     finally:
         await sender.aclose()
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    # Imported here, not at the top: suite.importer reaches suite.adapters, which loads PyRIT.
+    from suite.importer import import_source
+
+    try:
+        result = import_source(args.source, args.out, canary=args.canary, repeat=args.repeat)
+    except OSError as err:
+        # The importer lets a mkdir/write failure through raw; a path the user can fix is a
+        # clean exit 2, not an unexpected exit 1. The class name only: the message repeats paths.
+        raise ConfigError(f"cannot write to {args.out}: {type(err).__name__}") from err
+    count = len(result.categories)
+    noun = "category" if count == 1 else "categories"
+    print(f"imported {result.prompt_count} prompts across {count} {noun} → {result.out_dir}")
+    return EXIT_OK
 
 
 def _cmd_finalize(args: argparse.Namespace) -> int:

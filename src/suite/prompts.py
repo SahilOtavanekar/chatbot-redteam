@@ -10,6 +10,7 @@ trims or re-encodes it.
 import csv
 import io
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -187,6 +188,38 @@ def load_pack(path: Path) -> Pack:
     if not prompts:
         raise ConfigError(f"{path}: pack has no prompts")
     return Pack(name=name, prompts=prompts)
+
+
+def load_packs(paths: Sequence[Path]) -> Pack:
+    """Load several packs and merge them into one, keeping argument order.
+
+    Each path goes through ``load_pack``, so every per-pack problem is reported exactly as there.
+    The merged pack lists the prompts of the first path, then the second, and so on, and is named
+    after the paths joined with ``+``. A single path gives exactly what ``load_pack`` gives.
+
+    Raises ConfigError, naming both packs, when a prompt id appears in more than one of them (the
+    same pack given twice counts), and when no path is given.
+    """
+    if not paths:
+        raise ConfigError("no prompt pack given")
+    if len(paths) == 1:
+        return load_pack(paths[0])
+
+    prompts: list[Prompt] = []
+    first_seen: dict[str, Path] = {}
+    for path in paths:
+        for prompt in load_pack(path).prompts:
+            if prompt.id in first_seen:
+                first = first_seen[prompt.id]
+                where = (
+                    f"in {first}, which was given more than once"
+                    if first == path
+                    else f"in {first} and in {path}"
+                )
+                raise ConfigError(f"duplicate prompt id '{prompt.id}': listed {where}")
+            first_seen[prompt.id] = path
+            prompts.append(prompt)
+    return Pack(name="+".join(str(path) for path in paths), prompts=prompts)
 
 
 def _label(raw: dict[str, Any], position: int) -> str:

@@ -7,6 +7,10 @@ engine tests a local bot today and an organisation chatbot later.
 
 **Status (2026-10-26): v0.1 built (Tasks 1–16 done, final review fixes applied); Tasks 17–18
 wait for Sahil's prompt text; branch `feat/v0.1` pushed, CI green.**
+**v0.2 importer Phase 1 is built and validated** on branch `feat/v0.2-importer` (stacked on
+`feat/v0.1`, **unpushed**, needs its own PR): `suite import --source garak` generates a git-ignored
+OWASP baseline that is **LLM07 only**, and `--pack` is repeatable. Details: `docs/HANDOFF.md`,
+`docs/validation/v0.2-importer.md`, spec `docs/specs/2026-10-26-v0.2-importer-design.md`.
 Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
 (see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
 Mock validation: `docs/validation/v0.1-mock.md`.
@@ -23,6 +27,10 @@ Mock validation: `docs/validation/v0.1-mock.md`.
    re-check the Gandalf API before Task 18). Then superpowers:finishing-a-development-branch: open
    a PR from `feat/v0.1` to `main`, merge after CI is green.
 4. Sahil may first want to review progress; summarise from the ledger, don't re-run tasks.
+5. **v0.2 importer (Phase 1)** is built on `feat/v0.2-importer`, stacked on the still-unmerged
+   `feat/v0.1` and **not yet pushed**: it needs its own PR (open it after `feat/v0.1` merges, or
+   stacked on it). `docs/HANDOFF.md` carries the specifics; Phase 2 (LLM09) is gated on vendoring
+   the package registry reference sets.
 
 This project was split out of the `ai-red-teaming` lab (at `C:\dev\ai-red-teaming`). The lab's
 deliberately vulnerable bot is this framework's first owned test target.
@@ -58,7 +66,8 @@ deliberately vulnerable bot is this framework's first owned test target.
 
 ```
 src/suite/   ✔ models, config, prompts, patterns, planner, extract, engine, judge,
-             adapters/ (only PyRIT importer), evidence, report, run, review, compare, cli
+             adapters/ (only PyRIT importer; datasets.py loads garak files), evidence, report,
+             run, review, compare, cli · v0.2: importer, importer_map (on feat/v0.2-importer)
 endpoints/   ✔ one YAML per bot (mock, lab-bot, gandalf-baseline/-mid/-hardest);
              private/ subdir git-ignored
 prompts/     ✔ prompt packs (YAML/CSV): smoke (for the mock); lab-bot and Gandalf packs wait for
@@ -84,9 +93,13 @@ uv run suite validate --endpoint endpoints/mock.yaml --pack prompts/smoke   # se
 uv run suite run      --endpoint endpoints/mock.yaml --pack prompts/smoke
 uv run suite finalize --run results/<run-id>
 uv run suite compare  --baseline results/<r1> --run results/<r2>
+# v0.2 (feat/v0.2-importer): generate the git-ignored OWASP baseline (LLM07 only), then compose it
+# with your own prompts via the repeatable --pack
+uv run suite import --source garak --out prompts/baseline --canary SYSTEM-CANARY-7Q4P
+uv run suite run --endpoint endpoints/lab-bot.yaml --pack prompts/baseline --pack prompts/private/my-bot
 ```
 
 ## Next step
 
 Tasks 17–18 once Sahil supplies the prompt text, then finishing-a-development-branch (PR) — see
-"How to resume" above.
+"How to resume" above. The v0.2 importer (`feat/v0.2-importer`) is built and needs its own PR.

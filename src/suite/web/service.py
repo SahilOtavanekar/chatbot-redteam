@@ -3,9 +3,14 @@
 This is the web layer's door to the engine. It reads run folders through ``suite.evidence`` and
 hands back plain data, so the views never touch SQLite or ``run.json`` directly. A run id comes
 from a URL, so it is untrusted: ``resolve_run_dir`` is the only way to turn one into a path.
+
+It is also the only door that writes: a reviewer's verdict goes into the run's ``review.csv``
+(``set_review_verdict``) and ``finalize_run`` folds the sheet back into the run.
 """
 
 import csv
+import os
+import tempfile
 import threading
 from collections import Counter
 from dataclasses import dataclass
@@ -21,16 +26,24 @@ from suite.report import (
     VERDICT_LEGEND,
     ReportData,
     build_report_data,
+    csv_cell,
     run_facts,
 )
+from suite.review import REVIEW_CSV, finalize
 from suite.web.settings import WebSettings
 
 UNREADABLE = "unreadable"
 
-# csv's default field limit is 128 KB, and a full reply can be longer. The limit is process-wide
-# state, so reads that raise it take this lock: one thread must not restore it under another.
+# One lock for everything that touches ``review.csv`` in this process: a read, a verdict write
+# (read, change one row, replace the file) and a finalize. Held together they cannot interleave, so
+# two verdicts never overwrite each other and a read never meets a half-done replace (on Windows
+# an open file cannot be replaced). It also guards the csv field limit: csv's default is 128 KB,
+# a full reply can be longer, and the limit is process-wide, so one thread must not restore it
+# under another. Re-entrant, because a verdict write reads the file while it holds the lock.
 _CSV_LIMIT = 2**31 - 1
-_csv_limit_lock = threading.Lock()
+_review_csv_lock = threading.RLock()
+
+_REVIEW_VERDICTS = frozenset({"", "pass", "fail"})
 
 
 @dataclass(frozen=True)
@@ -103,6 +116,29 @@ class ReviewItem:
     reply: str
     verdict: str
     note: str
+
+
+@dataclass(frozen=True)
+class VerdictWrite:
+    """The outcome of saving one verdict. On success ``item`` is the updated row and ``error`` is
+    ``None``. Otherwise ``ok`` is false, ``item`` is ``None`` and ``error`` says why; the file is
+    left exactly as it was."""
+
+    ok: bool
+    item: ReviewItem | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class FinalizeOutcome:
+    """The outcome of finalizing a run. On success ``applied`` is how many attempts got a human
+    verdict now and ``pending`` how many are still unreviewed. Otherwise ``ok`` is false, both are
+    ``None`` and ``error`` carries the engine's message (it lists every bad row at once)."""
+
+    ok: bool
+    applied: int | None
+    pending: int | None
+    error: str | None
 
 
 def resolve_run_dir(settings: WebSettings, run_id: str) -> Path | None:
@@ -240,21 +276,129 @@ def review_queue(settings: WebSettings, run_id: str) -> list[ReviewItem] | None:
 
     The file is the draft queue ``suite run`` writes. A run with no ``review.csv`` has an empty
     queue (``[]``), and an unknown or unsafe ``run_id`` is ``None``. Rows come back in file order
-    and a missing column reads as an empty string.
+    and a missing column reads as an empty string. Raises ConfigError if the file cannot be read
+    (locked, or not valid UTF-8 / CSV).
     """
     run_dir = resolve_run_dir(settings, run_id)
     if run_dir is None:
         return None
-    path = run_dir / "review.csv"
+    path = run_dir / REVIEW_CSV
     if not path.is_file():
         return []
-    with _csv_limit_lock:
+    return [ReviewItem(**row) for row in _read_review_rows(path)]
+
+
+def set_review_verdict(
+    settings: WebSettings, run_id: str, attempt_id: str, verdict: str, note: str
+) -> VerdictWrite:
+    """Save a reviewer's ``verdict`` and ``note`` for one attempt in the run's ``review.csv``.
+
+    ``verdict`` is ``pass``, ``fail`` or ``""`` (clear it), in any case; anything else is refused.
+    The note goes through ``csv_cell``, so a note typed as ``=cmd()`` is stored as ``'=cmd()`` and
+    never runs as a spreadsheet formula (``suite finalize`` strips that mark back off). Every
+    other cell is written back exactly as read, under the header ``REVIEW_COLUMNS``. The new file
+    replaces the old one atomically, so a failure leaves ``review.csv`` as it was.
+
+    Not ``ok`` (and nothing written) for a bad verdict, an unknown or unsafe run, a run with no
+    ``review.csv``, an ``attempt_id`` not in the file, or a file that cannot be read or replaced.
+    An attempt listed on several rows has every one of them set, so the sheet stays consistent.
+    """
+    word = verdict.lower()
+    if word not in _REVIEW_VERDICTS:
+        return VerdictWrite(False, None, "verdict must be pass, fail or blank")
+    run_dir = resolve_run_dir(settings, run_id)
+    if run_dir is None:
+        return VerdictWrite(False, None, "run not found")
+    path = run_dir / REVIEW_CSV
+    if not path.is_file():
+        return VerdictWrite(False, None, f"{REVIEW_CSV} not found for this run")
+    with _review_csv_lock:
+        try:
+            rows = _read_review_rows(path)
+            matches = [row for row in rows if row["attempt_id"].strip() == attempt_id]
+            if not matches:
+                return VerdictWrite(False, None, f"attempt not found in {REVIEW_CSV}")
+            for row in matches:
+                row["verdict"] = word
+                row["note"] = csv_cell(note)
+            _write_review_rows(path, rows)
+        except ConfigError as exc:
+            return VerdictWrite(False, None, str(exc))
+        except OSError as exc:  # on Windows, a file open in Excel cannot be replaced
+            reason = exc.__class__.__name__
+            return VerdictWrite(
+                False, None, f"cannot write {REVIEW_CSV} ({reason}) — close it (e.g. in Excel)"
+            )
+    return VerdictWrite(True, ReviewItem(**matches[0]), None)
+
+
+def finalize_run(settings: WebSettings, run_id: str) -> FinalizeOutcome:
+    """Fold the run's ``review.csv`` into its evidence and write the final reports.
+
+    This is ``suite finalize``. The engine applies all the verdicts or none, so a ConfigError
+    (no ``review.csv``, a bad row, a report file locked in Excel) comes back as a not-``ok`` outcome
+    carrying its message, never as an exception. An unknown or unsafe ``run_id`` is not ``ok`` too.
+    """
+    run_dir = resolve_run_dir(settings, run_id)
+    if run_dir is None:
+        return FinalizeOutcome(False, None, None, "run not found")
+    # The engine reads review.csv itself and moves the process-wide csv limit without a lock, so
+    # it runs inside ours: no queue read or verdict write can overlap it.
+    with _review_csv_lock:
+        try:
+            result = finalize(run_dir)
+        except ConfigError as exc:
+            return FinalizeOutcome(False, None, None, str(exc))
+    return FinalizeOutcome(True, result.applied, result.pending, None)
+
+
+def _read_review_rows(path: Path) -> list[dict[str, str]]:
+    """Every row of ``path`` as a dict keyed by ``REVIEW_COLUMNS``; a missing cell reads as ``""``.
+
+    Header names are matched trimmed and lower-cased, as ``suite finalize`` matches them, so a
+    sheet the engine accepts is read whole. Columns outside ``REVIEW_COLUMNS`` are ignored. The
+    decode is strict: a replacement character must never be written back into the reviewer's file.
+    Raises ConfigError if the file cannot be read or is not valid UTF-8 / CSV.
+    """
+    with _review_csv_lock:
         previous = csv.field_size_limit(_CSV_LIMIT)
         try:
             with path.open(encoding="utf-8-sig", newline="") as handle:
+                reader = csv.DictReader(handle)
+                reader.fieldnames = [name.strip().lower() for name in reader.fieldnames or []]
                 return [
-                    ReviewItem(**{column: row.get(column) or "" for column in REVIEW_COLUMNS})
-                    for row in csv.DictReader(handle)
+                    {column: row.get(column) or "" for column in REVIEW_COLUMNS} for row in reader
                 ]
+        except OSError as exc:
+            raise ConfigError(
+                f"{REVIEW_CSV}: cannot read file ({exc.__class__.__name__}); "
+                "is it open in another program?"
+            ) from None
+        except UnicodeDecodeError:
+            raise ConfigError(f"{REVIEW_CSV}: not valid UTF-8 text") from None
+        except csv.Error as exc:
+            raise ConfigError(f"{REVIEW_CSV}: not readable as CSV ({exc})") from None
         finally:
             csv.field_size_limit(previous)
+
+
+def _write_review_rows(path: Path, rows: list[dict[str, str]]) -> None:
+    """Replace ``path`` with ``rows`` under the ``REVIEW_COLUMNS`` header, atomically.
+
+    The new file is written next to the old one and then renamed over it, so a crash or a locked
+    target leaves the original intact and no temp file behind. ``utf-8-sig`` puts a BOM first,
+    so Excel opens the file as UTF-8, as the engine's own writer does.
+    """
+    descriptor, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(REVIEW_COLUMNS)
+            writer.writerows([row[column] for column in REVIEW_COLUMNS] for row in rows)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise

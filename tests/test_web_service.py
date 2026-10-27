@@ -1,20 +1,27 @@
-"""Tests for the web layer's settings, run discovery and path-safe run resolution."""
+"""Tests for the web layer's settings, run discovery, review queue and write-back."""
 
+import codecs
 import csv
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from suite.evidence import read_run_json, write_run_json
-from suite.models import Verdict
+from suite.evidence import EvidenceStore, read_run_json, write_run_json
+from suite.models import ConfigError, DecidedBy, Verdict
 from suite.prompts import OWASP_LLM_2025
-from suite.report import write_reports
+from suite.report import REVIEW_COLUMNS, write_reports
+from suite.review import FinalizeResult
+from suite.web import service
 from suite.web.service import (
     compare,
     coverage,
+    finalize_run,
     get_run,
     list_runs,
     resolve_run_dir,
     review_queue,
+    set_review_verdict,
 )
 from suite.web.settings import WebSettings
 from tests.factories import make_run_dir
@@ -254,3 +261,272 @@ def test_review_queue_restores_the_csv_field_limit(tmp_path):
     before = csv.field_size_limit()
     review_queue(WebSettings(results_dir=tmp_path), run.name)
     assert csv.field_size_limit() == before
+
+
+def _cells(path):
+    """The raw cells of a CSV file (a long reply needs the field limit lifted to be read)."""
+    previous = csv.field_size_limit(2**31 - 1)
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            return list(csv.reader(handle))
+    finally:
+        csv.field_size_limit(previous)
+
+
+def test_set_verdict_writes_back_and_finalize_applies(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    s = WebSettings(results_dir=tmp_path)
+    w = set_review_verdict(s, run.name, "P-1#1", "pass", "looks fine")
+    assert w.ok and w.item.verdict == "pass"
+    assert review_queue(s, run.name)[0].verdict == "pass"  # persisted
+    out = finalize_run(s, run.name)
+    assert out.ok and out.applied == 1
+
+
+def test_set_verdict_neutralises_formula_note(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    s = WebSettings(results_dir=tmp_path)
+    set_review_verdict(s, run.name, "P-1#1", "fail", "=cmd()")
+    assert review_queue(s, run.name)[0].note.startswith("'=")  # csv_cell guard
+
+
+def test_set_verdict_rejects_bad_verdict_and_unknown_attempt(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    s = WebSettings(results_dir=tmp_path)
+    assert not set_review_verdict(s, run.name, "P-1#1", "maybe", "").ok
+    assert not set_review_verdict(s, run.name, "ZZ#9", "pass", "").ok
+
+
+def test_finalize_run_surfaces_config_error(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])  # no review.csv
+    out = finalize_run(WebSettings(results_dir=tmp_path), run.name)
+    assert not out.ok and "review.csv" in out.error  # nothing half-applied
+
+
+def test_set_verdict_result_carries_the_updated_item(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "the reply")])
+    write_reports(run, final=False)
+    write = set_review_verdict(WebSettings(results_dir=tmp_path), run.name, "P-1#1", "fail", "n")
+    assert write.error is None
+    assert write.item.attempt_id == "P-1#1" and write.item.reply == "the reply"
+    assert (write.item.verdict, write.item.note) == ("fail", "n")
+
+
+def test_set_verdict_leaves_every_other_cell_verbatim(tmp_path):
+    awkward = 'He said "hi", then\r\nleft\nlines — café 日本'
+    run = make_run_dir(
+        tmp_path,
+        [
+            ("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "=SUM(1,2)"),
+            ("P-2#1", "LLM06", Verdict.NEEDS_REVIEW, awkward),
+            ("P-3#1", "LLM01", Verdict.NEEDS_REVIEW, "x" * (csv.field_size_limit() + 5)),
+        ],
+    )
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    before = _cells(path)
+    assert before[1][6] == "'=SUM(1,2)"  # the engine's own formula guard, already in the file
+    s = WebSettings(results_dir=tmp_path)
+    assert set_review_verdict(s, run.name, "P-2#1", "fail", "bad").ok
+    after = _cells(path)
+    assert path.read_bytes().startswith(codecs.BOM_UTF8)
+    assert after[0] == list(REVIEW_COLUMNS) == before[0]
+    assert len(after) == len(before)
+    for old, new in zip(before[1:], after[1:], strict=True):
+        if old[0] == "P-2#1":
+            assert new[:7] == old[:7] and new[7:] == ["fail", "bad"]
+        else:
+            assert new == old  # nothing re-prefixed, re-quoted or truncated
+
+
+def test_set_verdict_is_case_insensitive_and_blank_clears_it(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    s = WebSettings(results_dir=tmp_path)
+    assert set_review_verdict(s, run.name, "P-1#1", "PASS", "keep").item.verdict == "pass"
+    assert set_review_verdict(s, run.name, "P-1#1", "Fail", "").item.verdict == "fail"
+    cleared = set_review_verdict(s, run.name, "P-1#1", "", "")
+    assert cleared.ok and (cleared.item.verdict, cleared.item.note) == ("", "")
+    assert review_queue(s, run.name)[0].verdict == ""
+
+
+def test_set_verdict_rejects_without_touching_the_file(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    before = path.read_bytes()
+    s = WebSettings(results_dir=tmp_path)
+    for attempt_id, verdict in (("P-1#1", "maybe"), ("P-1#1", "pass "), ("ZZ#9", "pass")):
+        write = set_review_verdict(s, run.name, attempt_id, verdict, "n")
+        assert not write.ok and write.item is None and write.error
+    assert path.read_bytes() == before
+
+
+def test_set_verdict_fails_cleanly_for_unknown_run_or_missing_file(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])  # no review.csv
+    s = WebSettings(results_dir=tmp_path)
+    for run_id in ("no-such-run", "../" + run.name, run.name):
+        write = set_review_verdict(s, run_id, "P-1#1", "pass", "")
+        assert not write.ok and write.item is None and write.error
+    assert not (run / "review.csv").exists()
+
+
+def test_set_verdict_updates_every_row_listed_for_the_attempt(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    rows = _cells(path)
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:  # a hand-duplicated row
+        csv.writer(handle).writerows([*rows, rows[1]])
+    s = WebSettings(results_dir=tmp_path)
+    assert set_review_verdict(s, run.name, "P-1#1", "pass", "").ok
+    assert [item.verdict for item in review_queue(s, run.name)] == ["pass", "pass"]
+
+
+def test_set_verdict_reads_a_sheet_whose_header_was_retyped(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "keep this reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    rows = _cells(path)
+    rows[0] = [f" {name.upper()} " for name in rows[0]]  # the engine accepts this header
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        csv.writer(handle).writerows(rows)
+    s = WebSettings(results_dir=tmp_path)
+    assert set_review_verdict(s, run.name, "P-1#1", "pass", "n").ok
+    assert _cells(path)[0] == list(REVIEW_COLUMNS)
+    item = review_queue(s, run.name)[0]
+    assert (item.reply, item.verdict) == ("keep this reply", "pass")  # nothing blanked
+
+
+def test_set_verdict_reports_an_unreadable_file_and_leaves_it_alone(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    path.write_bytes(path.read_bytes() + b"\xff\xfe not utf-8 \xff")
+    before = path.read_bytes()
+    limit = csv.field_size_limit()
+    s = WebSettings(results_dir=tmp_path)
+    write = set_review_verdict(s, run.name, "P-1#1", "pass", "")
+    assert not write.ok and write.item is None and "review.csv" in write.error
+    assert path.read_bytes() == before  # never rewritten with replacement characters
+    assert csv.field_size_limit() == limit  # restored even though the read failed
+    with pytest.raises(ConfigError):
+        review_queue(s, run.name)
+
+
+def test_set_verdict_keeps_the_original_when_the_write_fails(tmp_path, monkeypatch):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    before = path.read_bytes()
+
+    def locked(src, dst):  # what Windows does when the file is open in Excel
+        raise PermissionError(13, "in use", str(dst))
+
+    monkeypatch.setattr("suite.web.service.os.replace", locked)
+    write = set_review_verdict(WebSettings(results_dir=tmp_path), run.name, "P-1#1", "pass", "")
+    assert not write.ok and write.item is None and "review.csv" in write.error
+    assert path.read_bytes() == before
+    assert sorted(entry.name for entry in run.glob("review.csv*")) == ["review.csv"]  # no temp
+
+
+def test_concurrent_verdicts_are_not_lost(tmp_path):
+    count = 12
+    run = make_run_dir(
+        tmp_path,
+        [(f"P-{i}#1", "LLM01", Verdict.NEEDS_REVIEW, f"reply {i}") for i in range(1, count + 1)],
+    )
+    write_reports(run, final=False)
+    s = WebSettings(results_dir=tmp_path)
+    start = threading.Barrier(count * 2)
+
+    def write(i):
+        start.wait()
+        return set_review_verdict(s, run.name, f"P-{i}#1", "pass", f"note {i}")
+
+    def read(_):
+        start.wait()
+        return review_queue(s, run.name)
+
+    with ThreadPoolExecutor(max_workers=count * 2) as pool:
+        writes = pool.map(write, range(1, count + 1))
+        reads = pool.map(read, range(count))
+        assert all(w.ok for w in writes), "a verdict write failed under contention"
+        assert all(len(rows) == count for rows in reads)  # a read never sees a torn file
+    items = review_queue(s, run.name)
+    assert [(item.verdict, item.note) for item in items] == [
+        ("pass", f"note {i}") for i in range(1, count + 1)
+    ]
+
+
+def test_finalize_records_the_human_verdict_and_the_note_as_typed(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    s = WebSettings(results_dir=tmp_path)
+    assert set_review_verdict(s, run.name, "P-1#1", "fail", "=cmd()").ok
+    assert finalize_run(s, run.name).ok
+    store = EvidenceStore(run / "evidence.db")
+    try:
+        (attempt,) = store.attempts()
+    finally:
+        store.close()
+    assert (attempt.verdict, attempt.decided_by) == (Verdict.FAIL, DecidedBy.HUMAN)
+    assert attempt.human_note == "=cmd()"  # the engine strips the guard the sheet carried
+
+
+def test_finalize_run_applies_nothing_when_a_row_is_bad(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    rows = _cells(path)
+    rows[1][7] = "maybe"  # a reviewer typed this into the sheet by hand
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        csv.writer(handle).writerows(rows)
+    out = finalize_run(WebSettings(results_dir=tmp_path), run.name)
+    assert not out.ok and out.applied is None and out.pending is None and "maybe" in out.error
+    assert not read_run_json(run).get("finalized_at")
+
+
+def test_finalize_run_counts_applied_and_pending(tmp_path):
+    run = make_run_dir(
+        tmp_path,
+        [
+            ("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "a"),
+            ("P-2#1", "LLM01", Verdict.NEEDS_REVIEW, "b"),
+        ],
+    )
+    write_reports(run, final=False)
+    s = WebSettings(results_dir=tmp_path)
+    set_review_verdict(s, run.name, "P-1#1", "fail", "")
+    out = finalize_run(s, run.name)
+    assert (out.ok, out.applied, out.pending, out.error) == (True, 1, 1, None)
+    assert read_run_json(run).get("finalized_at")
+
+
+def test_finalize_run_is_not_ok_for_an_unknown_run(tmp_path):
+    out = finalize_run(WebSettings(results_dir=tmp_path), "no-such-run")
+    assert not out.ok and out.applied is None and out.pending is None and out.error
+
+
+def test_finalize_run_holds_the_review_lock(tmp_path, monkeypatch):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    held = []
+
+    def fake_finalize(run_dir):
+        def try_lock():  # from another thread: an RLock only refuses a non-owner
+            got = service._review_csv_lock.acquire(blocking=False)
+            held.append(not got)
+            if got:
+                service._review_csv_lock.release()
+
+        worker = threading.Thread(target=try_lock)
+        worker.start()
+        worker.join()
+        return FinalizeResult(applied=0, pending=0)
+
+    monkeypatch.setattr("suite.web.service.finalize", fake_finalize)
+    assert finalize_run(WebSettings(results_dir=tmp_path), run.name).ok
+    assert held == [True]

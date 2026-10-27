@@ -125,6 +125,15 @@ class ReviewItem:
 
 
 @dataclass(frozen=True)
+class ReviewListing:
+    """The review queue as a page shows it: the items, or ``error`` (and no items) when
+    ``review.csv`` cannot be read."""
+
+    items: list[ReviewItem]
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class VerdictWrite:
     """The outcome of saving one verdict. On success ``item`` is the updated row and ``error`` is
     ``None``. Otherwise ``ok`` is false, ``item`` is ``None`` and ``error`` says why; the file is
@@ -298,6 +307,17 @@ def review_queue(settings: WebSettings, run_id: str) -> list[ReviewItem] | None:
     if not path.is_file():
         return []
     return [ReviewItem(**row) for row in _read_review_rows(path)]
+
+
+def review_listing(settings: WebSettings, run_id: str) -> ReviewListing | None:
+    """``review_queue`` for a page: a ``review.csv`` that cannot be read comes back as ``error``
+    on the listing instead of raising, so the JSON API and the HTML view both show it rather than
+    fail. An unknown or unsafe ``run_id`` is ``None``."""
+    try:
+        items = review_queue(settings, run_id)
+    except ConfigError as exc:  # a corrupt or locked review.csv: say so, don't 500
+        return ReviewListing(items=[], error=str(exc))
+    return None if items is None else ReviewListing(items=items)
 
 
 def set_review_verdict(

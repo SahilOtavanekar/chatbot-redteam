@@ -1,0 +1,7 @@
+{# The fragment a finalize POST swaps into the status region of the review page. #}
+{% if outcome.ok %}
+<p class="status ok" role="status">Finalized: {{ outcome.applied }} verdict{{ "" if outcome.applied == 1 else "s" }} applied, {{ outcome.pending }} still pending.{% if outcome.pending %} A pending attempt counts as Inconclusive, not as a Pass.{% endif %}
+  <a href="/runs/{{ run_id | urlencode }}">Open the final report</a></p>
+{% else %}
+<p class="status error" role="alert">Could not finalize: {{ outcome.error }}</p>
+{% endif %}

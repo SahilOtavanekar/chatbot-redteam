@@ -66,7 +66,7 @@ def test_api_publishes_an_openapi_schema_for_every_route(tmp_path):
     }
 
 
-@pytest.mark.parametrize("module", ["api.py", "app.py"])
+@pytest.mark.parametrize("module", ["api.py", "app.py", "deps.py", "views.py"])
 def test_routers_reach_the_engine_only_through_the_service(module):
     source = (Path(service.__file__).parent / module).read_text(encoding="utf-8")
     # Catches ``from suite.x import ...``, ``import suite.x`` and the bare ``from suite import x``.

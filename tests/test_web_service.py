@@ -563,3 +563,28 @@ def test_finalize_run_holds_the_review_lock(tmp_path, monkeypatch):
     monkeypatch.setattr("suite.web.service.finalize", fake_finalize)
     assert finalize_run(WebSettings(results_dir=tmp_path), run.name).ok
     assert held == [True]
+
+
+def test_review_listing_returns_the_queue_without_an_error(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    listing = service.review_listing(WebSettings(results_dir=tmp_path), run.name)
+    assert listing is not None and listing.error is None
+    assert [item.attempt_id for item in listing.items] == ["P-1#1"]
+
+
+def test_review_listing_is_none_for_an_unknown_or_unsafe_run(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "x")])
+    write_reports(run, final=False)
+    settings = WebSettings(results_dir=tmp_path)
+    assert service.review_listing(settings, "no-such-run") is None
+    assert service.review_listing(settings, "../" + run.name) is None
+
+
+def test_review_listing_reports_an_unreadable_review_csv_as_an_error(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
+    write_reports(run, final=False)
+    (run / "review.csv").write_bytes(b"attempt_id,reply\n\xff\xfe\xfa,broken\n")
+    listing = service.review_listing(WebSettings(results_dir=tmp_path), run.name)
+    assert listing is not None and listing.items == []
+    assert listing.error is not None and "review.csv" in listing.error and "UTF-8" in listing.error

@@ -1,0 +1,6 @@
+{# One verdict as a badge. ``v`` is a Verdict, or None for a prompt one side of a comparison lacks;
+   it always goes through the ``verdict`` filter. The border style differs per verdict, so the
+   badge never relies on colour alone. #}
+{% macro badge(v, decided_by=()) %}
+<span class="badge {{ 'v-none' if v is none else 'v-' ~ v.value }}">{{ v | verdict(decided_by) }}</span>
+{%- endmacro %}

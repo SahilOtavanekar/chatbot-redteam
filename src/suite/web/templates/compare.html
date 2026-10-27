@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Compare - chatbot-redteam{% endblock %}
+{% block content %}
+<h1>Compare</h1>
+<p>Baseline <a href="/runs/{{ view.baseline_id | urlencode }}"><code>{{ view.baseline_id }}</code></a>
+  against run <a href="/runs/{{ view.run_id | urlencode }}"><code>{{ view.run_id }}</code></a>.</p>
+<p class="counts">{% for change, count in view.counts.items() %}<span class="change change-{{ change }}">{{ change }} {{ count }}</span>{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
+<p class="legend">Fixed = Fail before, Pass now. Regressed = Pass before, Fail now. Unclear = any other difference (for example Fail to Inconclusive; Inconclusive is never a Pass, so moving into or out of it is neither a fix nor a regression). New and removed = the prompt is in only one of the two runs. Both runs are read as final: an attempt still waiting for review counts as Inconclusive.</p>
+<div class="table-wrap">
+<table>
+  <tr><th>Prompt</th><th>Category</th><th>Baseline</th><th>Now</th><th>Change</th></tr>
+{% for row in view.rows %}
+  <tr class="change-{{ row.change.value }}">
+    <td>{{ row.prompt_id }}</td><td>{{ row.category }}</td>
+    <td>{{ badge(row.baseline) }}</td><td>{{ badge(row.current) }}</td>
+    <td><span class="change change-{{ row.change.value }}">{{ row.change.value }}</span></td>
+  </tr>
+{% else %}
+  <tr><td colspan="5">Neither run has any prompts.</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endblock %}

@@ -9,19 +9,15 @@ The routes are plain ``def``: the service does blocking file and SQLite work, wh
 in its thread pool (the service serialises the ``review.csv`` access itself).
 """
 
-from dataclasses import dataclass
-from typing import Annotated, NoReturn
+from typing import NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from suite.web import service
-from suite.web.app import get_settings
-from suite.web.settings import WebSettings
+from suite.web.deps import SettingsDep
 
 router = APIRouter(prefix="/api/v1")
-
-SettingsDep = Annotated[WebSettings, Depends(get_settings)]
 
 
 class VerdictBody(BaseModel):
@@ -29,14 +25,6 @@ class VerdictBody(BaseModel):
 
     verdict: str
     note: str = ""
-
-
-@dataclass(frozen=True)
-class ReviewListing:
-    """The review queue, or ``error`` (and no items) when ``review.csv`` cannot be read."""
-
-    items: list[service.ReviewItem]
-    error: str | None = None
 
 
 def _not_found(what: str) -> NoReturn:
@@ -65,14 +53,11 @@ def get_coverage(run_id: str, settings: SettingsDep) -> list[service.CoverageRow
 
 
 @router.get("/runs/{run_id}/review")
-def get_review(run_id: str, settings: SettingsDep) -> ReviewListing:
-    try:
-        items = service.review_queue(settings, run_id)
-    except service.ConfigError as exc:  # a corrupt or locked review.csv: say so, don't 500
-        return ReviewListing(items=[], error=str(exc))
-    if items is None:
+def get_review(run_id: str, settings: SettingsDep) -> service.ReviewListing:
+    listing = service.review_listing(settings, run_id)
+    if listing is None:
         _not_found("run")
-    return ReviewListing(items=items)
+    return listing
 
 
 @router.put("/runs/{run_id}/review/{attempt_id}")

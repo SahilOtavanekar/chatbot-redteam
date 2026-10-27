@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Coverage {{ run_id }} - chatbot-redteam{% endblock %}
+{% block content %}
+<h1>Coverage <code>{{ run_id }}</code></h1>
+{% set current = "coverage" %}
+{% include "_run_nav.html" %}
+<div class="table-wrap">
+<table>
+  <tr><th>Code</th><th>Category</th><th>Coverage</th><th>Prompts</th></tr>
+{% for row in rows %}
+  <tr class="{{ 'covered' if row.present else 'gap' }}">
+    <td>{{ row.code }}</td><td>{{ row.name }}</td>
+    <td>{{ "Covered" if row.present else "Gap" }}</td>
+    <td class="num">{{ row.prompt_count }}</td>
+  </tr>
+{% endfor %}
+</table>
+</div>
+<p class="legend">Covered = at least one prompt in this run is tagged with the category. Gap = no prompts, so nothing was tested: a gap in coverage, not a pass. Counts are prompts, not attempts.</p>
+<h2>Verdict key</h2>
+<p class="legend">{{ legend }}</p>
+{% endblock %}

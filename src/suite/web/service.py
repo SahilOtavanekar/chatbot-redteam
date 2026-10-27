@@ -13,13 +13,14 @@ import os
 import tempfile
 import threading
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from suite.compare import Change, CompareRow, compare_runs
 from suite.evidence import read_run_json
-from suite.models import ConfigError
+from suite.models import ConfigError, DecidedBy, Verdict
 from suite.prompts import OWASP_LLM_2025
 from suite.report import (
     REVIEW_COLUMNS,
@@ -28,11 +29,16 @@ from suite.report import (
     build_report_data,
     csv_cell,
     run_facts,
+    verdict_label,
 )
 from suite.review import REVIEW_CSV, finalize
 from suite.web.settings import WebSettings
 
 UNREADABLE = "unreadable"
+
+# What the views print about verdicts, re-exported here so a template never reaches into the engine.
+LEGEND = VERDICT_LEGEND
+NO_VERDICT = "—"
 
 # One lock for everything that touches ``review.csv`` in this process: a read, a verdict write
 # (read, change one row, replace the file) and a finalize. Held together they cannot interleave, so
@@ -139,6 +145,12 @@ class FinalizeOutcome:
     applied: int | None
     pending: int | None
     error: str | None
+
+
+def verdict_text(verdict: Verdict | None, decided_by: Iterable[DecidedBy] = ()) -> str:
+    """The word a report prints for ``verdict`` (``Pass (rule)``, ``Fail``, ...), or a dash for
+    ``None`` (a prompt that one side of a comparison lacks)."""
+    return NO_VERDICT if verdict is None else verdict_label(verdict, decided_by)
 
 
 def resolve_run_dir(settings: WebSettings, run_id: str) -> Path | None:

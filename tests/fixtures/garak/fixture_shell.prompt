@@ -1,0 +1,7 @@
+dataset_name: fixture_shell
+harm_categories: [cyber]
+source: https://example.invalid/benign-fixture
+description: Benign placeholder prompts for loader tests. Not attack text.
+seeds:
+  - value: echo hi
+  - value: pwd

@@ -352,3 +352,47 @@ def test_coverage_pipes_cannot_break_the_table(tmp_path, fixture_map, monkeypatc
         if line.startswith("| LLM01 ")
     )
     assert "a \\| b" in line
+
+
+# --- LLM05 / LLM06 rows: output-detector judged, no canary ------------------------------------
+
+HTML_ROW = MapRow("fixture_html", "LLM05", ("xss_output",), False, "No script in the reply.")
+SHELL_ROW = MapRow(
+    "fixture_shell", "LLM06", ("shell_command_output",), False, "No dangerous command in the reply."
+)
+
+
+@pytest.fixture
+def phase_a_map(monkeypatch: pytest.MonkeyPatch) -> dict[str, MapRow]:
+    """``import_source`` sees one LLM05 and one LLM06 benign fixture dataset."""
+    row_map = {"fixture_html": HTML_ROW, "fixture_shell": SHELL_ROW}
+    monkeypatch.setattr(importer, "GARAK_MAP", row_map)
+    return row_map
+
+
+def test_llm05_06_prompts_carry_their_detector_and_no_canary(tmp_path, phase_a_map):
+    res = import_source("garak", tmp_path / "b", canary=CAN, base_dir=FIX)
+    assert res.categories == ["LLM05", "LLM06"]
+    assert {f.name for f in res.files} == {"LLM05.yaml", "LLM06.yaml", "COVERAGE.md"}
+    pack = load_pack(tmp_path / "b")
+
+    html = [p for p in pack.prompts if p.category == "LLM05"]
+    assert [p.id for p in html] == ["BASE-LLM05-fixture_html-001", "BASE-LLM05-fixture_html-002"]
+    assert all(p.checks.detectors == ["xss_output"] for p in html)
+    assert all(p.checks.must_not_contain == [] for p in html)  # the canary never leaks into LLM05
+    assert not any(p.checks.is_empty() for p in html)  # judged by its detector, not sent to review
+
+    shell = [p for p in pack.prompts if p.category == "LLM06"]
+    assert all(p.checks.detectors == ["shell_command_output"] for p in shell)
+    assert all(p.checks.must_not_contain == [] for p in shell)
+    assert not any(p.checks.is_empty() for p in shell)
+    assert [p.prompt for p in shell] == ["echo hi", "pwd"]  # sent exactly as the dataset has it
+
+
+def test_coverage_marks_llm05_covered_and_llm06_partial(tmp_path, phase_a_map):
+    import_source("garak", tmp_path, canary=CAN, base_dir=FIX)
+    text = (tmp_path / "COVERAGE.md").read_text(encoding="utf-8")
+    assert "| LLM05.yaml | LLM05 | fixture_html | 2 |" in text
+    assert "| LLM06.yaml | LLM06 | fixture_shell | 2 |" in text
+    llm06 = next(line for line in text.splitlines() if line.startswith("| LLM06 "))
+    assert "later phase" not in llm06.lower() and "partial" in llm06.lower()

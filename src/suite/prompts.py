@@ -34,7 +34,9 @@ OWASP_LLM_2025: dict[str, str] = {
 }
 
 # The ready-made output detectors an adapter provides (see suite.adapters).
-DETECTOR_NAMES = frozenset({"credential_leak", "xss_output", "markdown_injection"})
+DETECTOR_NAMES = frozenset(
+    {"credential_leak", "xss_output", "markdown_injection", "shell_command_output"}
+)
 
 MIN_CONTAIN_CHARS = 6
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")

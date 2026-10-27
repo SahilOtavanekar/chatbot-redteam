@@ -316,6 +316,124 @@ def test_a_stale_pack_file_with_a_clashing_id_fails_the_self_check(tmp_path, fix
         import_source("garak", tmp_path, canary=CAN, base_dir=FIX)
 
 
+# --- pruning stale generated files -----------------------------------------------------------
+
+# A pack file by someone else: valid, so the importer's load_pack self-check still passes.
+_USER_PACK = "- id: USER-001\n  category: LLM01\n  prompt: A harmless question.\n"
+
+
+def test_stale_generated_file_is_pruned(tmp_path, fixture_map):
+    out = tmp_path / "b"
+    out.mkdir()
+    (out / "LLM99.yaml").write_text("- id: X\n  category: LLM01\n  prompt: x\n", encoding="utf-8")
+    import_source("garak", out, canary=CAN, base_dir=FIX)
+    assert not (out / "LLM99.yaml").exists()
+
+
+def test_the_output_is_exactly_the_current_maps_product(tmp_path, fixture_map):
+    out = tmp_path / "b"
+    out.mkdir()
+    for name in ("LLM05.yaml", "LLM06.yaml", "LLM99.yaml", "COVERAGE.md"):
+        (out / name).write_text("stale\n", encoding="utf-8")
+    result = import_source("garak", out, canary=CAN, base_dir=FIX)
+    assert _files_in(out) == {"LLM07.yaml", "COVERAGE.md"}
+    assert {f.name for f in result.files} == {"LLM07.yaml", "COVERAGE.md"}
+    assert (out / "COVERAGE.md").read_text(encoding="utf-8") != "stale\n"
+
+
+def test_a_stale_file_with_a_clashing_id_no_longer_fails_the_self_check(
+    tmp_path, fixture_map, rows
+):
+    # A managed file left over from an earlier run is pruned before the self-check reads the
+    # folder, so its ids cannot clash with this run's.
+    clash = f"- id: BASE-LLM07-{DATASET}-001\n  category: LLM07\n  prompt: Another prompt.\n"
+    (tmp_path / "LLM99.yaml").write_text(clash, encoding="utf-8")
+    import_source("garak", tmp_path, canary=CAN, base_dir=FIX)
+    assert not (tmp_path / "LLM99.yaml").exists()
+    expected = [f"BASE-LLM07-{DATASET}-{n:03d}" for n in range(1, len(rows) + 1)]
+    assert [p.id for p in load_pack(tmp_path).prompts] == expected
+
+
+def test_pruning_leaves_unmanaged_files(tmp_path, fixture_map):
+    out = tmp_path / "b"
+    out.mkdir()
+    (out / "notes.txt").write_text("keep me", encoding="utf-8")
+    import_source("garak", out, canary=CAN, base_dir=FIX)
+    assert (out / "notes.txt").read_text(encoding="utf-8") == "keep me"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "my-extra.yaml",  # a user's own pack file
+        "LLM-notes.yaml",  # starts like a category file but is not LLM + two digits
+        "LLM7.yaml",  # one digit
+        "LLM100.yaml",  # three digits
+        "xLLM99.yaml",  # not anchored at the start
+        "llm99.yaml",  # the pattern is case-sensitive, as written
+        "LLM99.yml",  # a different extension
+        "LLM99.yaml.bak",  # not anchored at the end
+        "LLM٩٩.yaml",  # non-ASCII digits are not category digits
+    ],
+)
+def test_only_the_managed_name_pattern_is_pruned(tmp_path, fixture_map, name):
+    out = tmp_path / "b"
+    out.mkdir()
+    body = _USER_PACK if name.endswith((".yaml", ".yml")) else "keep me\n"
+    (out / name).write_text(body, encoding="utf-8")
+    import_source("garak", out, canary=CAN, base_dir=FIX)
+    assert (out / name).read_text(encoding="utf-8") == body
+
+
+def test_a_failed_import_does_not_prune(tmp_path, fixture_map):
+    out = tmp_path / "b"
+    out.mkdir()
+    (out / "LLM07.yaml").write_text("prior", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        import_source("garak", out, canary="ab", base_dir=FIX)  # short canary
+    assert (out / "LLM07.yaml").read_text(encoding="utf-8") == "prior"
+
+
+def test_a_prompt_the_pack_refuses_does_not_prune_a_prior_baseline(tmp_path, fixture_map):
+    folder = tmp_path / "ds"
+    folder.mkdir()
+    (folder / f"{DATASET}.prompt").write_text(
+        'seeds:\n  - value: A fine prompt.\n  - value: ""\n', encoding="utf-8"
+    )
+    out = tmp_path / "b"
+    out.mkdir()
+    prior = {"LLM07.yaml": "prior", "LLM99.yaml": "older", "COVERAGE.md": "prior coverage"}
+    for name, text in prior.items():
+        (out / name).write_text(text, encoding="utf-8")
+    with pytest.raises(ConfigError, match=rf"{DATASET}.*index 1"):
+        import_source("garak", out, canary=CAN, base_dir=folder)
+    assert {name: (out / name).read_text(encoding="utf-8") for name in _files_in(out)} == prior
+
+
+def test_a_missing_dataset_does_not_prune_a_prior_baseline(tmp_path, fixture_map):
+    out = tmp_path / "b"
+    out.mkdir()
+    (out / "LLM99.yaml").write_text("older", encoding="utf-8")
+    with pytest.raises(ConfigError, match=DATASET):
+        import_source("garak", out, canary=CAN, base_dir=tmp_path / "no-such-folder")
+    assert (out / "LLM99.yaml").read_text(encoding="utf-8") == "older"
+
+
+def test_a_failed_write_does_not_prune(tmp_path, fixture_map, monkeypatch):
+    # The stale files go only once the new set is safely on disk.
+    out = tmp_path / "b"
+    out.mkdir()
+    (out / "LLM99.yaml").write_text("older", encoding="utf-8")
+
+    def boom(src, dst):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(importer.os, "replace", boom)
+    with pytest.raises(OSError, match="disk went away"):
+        import_source("garak", out, canary=CAN, base_dir=FIX)
+    assert (out / "LLM99.yaml").read_text(encoding="utf-8") == "older"
+
+
 # --- COVERAGE.md -----------------------------------------------------------------------------
 
 
@@ -352,3 +470,47 @@ def test_coverage_pipes_cannot_break_the_table(tmp_path, fixture_map, monkeypatc
         if line.startswith("| LLM01 ")
     )
     assert "a \\| b" in line
+
+
+# --- LLM05 / LLM06 rows: output-detector judged, no canary ------------------------------------
+
+HTML_ROW = MapRow("fixture_html", "LLM05", ("xss_output",), False, "No script in the reply.")
+SHELL_ROW = MapRow(
+    "fixture_shell", "LLM06", ("shell_command_output",), False, "No dangerous command in the reply."
+)
+
+
+@pytest.fixture
+def phase_a_map(monkeypatch: pytest.MonkeyPatch) -> dict[str, MapRow]:
+    """``import_source`` sees one LLM05 and one LLM06 benign fixture dataset."""
+    row_map = {"fixture_html": HTML_ROW, "fixture_shell": SHELL_ROW}
+    monkeypatch.setattr(importer, "GARAK_MAP", row_map)
+    return row_map
+
+
+def test_llm05_06_prompts_carry_their_detector_and_no_canary(tmp_path, phase_a_map):
+    res = import_source("garak", tmp_path / "b", canary=CAN, base_dir=FIX)
+    assert res.categories == ["LLM05", "LLM06"]
+    assert {f.name for f in res.files} == {"LLM05.yaml", "LLM06.yaml", "COVERAGE.md"}
+    pack = load_pack(tmp_path / "b")
+
+    html = [p for p in pack.prompts if p.category == "LLM05"]
+    assert [p.id for p in html] == ["BASE-LLM05-fixture_html-001", "BASE-LLM05-fixture_html-002"]
+    assert all(p.checks.detectors == ["xss_output"] for p in html)
+    assert all(p.checks.must_not_contain == [] for p in html)  # the canary never leaks into LLM05
+    assert not any(p.checks.is_empty() for p in html)  # judged by its detector, not sent to review
+
+    shell = [p for p in pack.prompts if p.category == "LLM06"]
+    assert all(p.checks.detectors == ["shell_command_output"] for p in shell)
+    assert all(p.checks.must_not_contain == [] for p in shell)
+    assert not any(p.checks.is_empty() for p in shell)
+    assert [p.prompt for p in shell] == ["echo hi", "pwd"]  # sent exactly as the dataset has it
+
+
+def test_coverage_marks_llm05_covered_and_llm06_partial(tmp_path, phase_a_map):
+    import_source("garak", tmp_path, canary=CAN, base_dir=FIX)
+    text = (tmp_path / "COVERAGE.md").read_text(encoding="utf-8")
+    assert "| LLM05.yaml | LLM05 | fixture_html | 2 |" in text
+    assert "| LLM06.yaml | LLM06 | fixture_shell | 2 |" in text
+    llm06 = next(line for line in text.splitlines() if line.startswith("| LLM06 "))
+    assert "later phase" not in llm06.lower() and "partial" in llm06.lower()

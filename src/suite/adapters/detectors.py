@@ -1,10 +1,16 @@
 """The judge's ready-made detectors: PyRIT's regex scorers behind our ``Detector`` interface.
 
-The three scorers are pure regex (no LLM, no network). Scoring still records each score in
+The four scorers are pure regex (no LLM, no network). Scoring still records each score in
 PyRIT's central memory, so ``init_pyrit()`` must have run before a detector is called.
 """
 
-from pyrit.score import CredentialLeakScorer, MarkdownInjectionScorer, Scorer, XSSOutputScorer
+from pyrit.score import (
+    CredentialLeakScorer,
+    MarkdownInjectionScorer,
+    Scorer,
+    ShellCommandOutputScorer,
+    XSSOutputScorer,
+)
 
 from suite.judge import Detector
 
@@ -27,4 +33,5 @@ def pyrit_detectors() -> dict[str, Detector]:
         "credential_leak": _detector("credential_leak", CredentialLeakScorer()),
         "xss_output": _detector("xss_output", XSSOutputScorer()),
         "markdown_injection": _detector("markdown_injection", MarkdownInjectionScorer()),
+        "shell_command_output": _detector("shell_command_output", ShellCommandOutputScorer()),
     }

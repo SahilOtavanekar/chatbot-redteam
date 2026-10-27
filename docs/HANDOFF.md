@@ -14,7 +14,24 @@ the organisation's own chatbots with this.
 Split out of the `ai-red-teaming` lab (`C:\dev\ai-red-teaming`), whose vulnerable bot is the first
 owned test target.
 
-## Where we are
+## Resume point (2026-10-26 evening) — build v0.3 Phase A tomorrow
+
+Three stacked branches: `feat/v0.1` → `feat/v0.2-importer` → `feat/v0.3-owasp-coverage` (current).
+- **v0.1:** built, reviewed, pushed, CI green. PR not opened.
+- **v0.2 importer (Phase 1, LLM07):** built, validated, reviewed, pushed, CI green, **PR #1 open**.
+- **v0.3 full-OWASP-coverage:** **planned only, no code.** Spec
+  `docs/specs/2026-10-26-v0.3-owasp-coverage-design.md` (honest contract: all ten represented — 7
+  rule-judged packs, LLM08 planted-marker template, LLM03/04 review checklist; prompts only from
+  PyRIT's bundled local garak datasets; LLM05/06 payloads sent as-is since garak ships no carriers).
+  **Next action:** build **Phase A (LLM05 + LLM06)** from
+  `docs/superpowers/plans/2026-10-26-v0.3-phase-a-llm05-06.md`, subagent-driven (4 tasks: wire the
+  `shell_command_output` detector; add 4 garak map rows; stale-file pruning; CLI/validation). Then
+  Phases B (LLM09), C (LLM01 scorer), D (LLM10 resource detector), E (LLM08 template), F (LLM03/04
+  checklist) — each its own spec/plan (see roadmap §4).
+- Decisions locked while planning v0.3: all-ten honest mix; payloads-as-is; package-hallucination
+  spike confirmed the scorer runs offline but needs PyRIT's `garak_pypi_packages` list vendored (Phase B).
+
+## Where we are (v0.1 / v0.2 history)
 
 - **Spec approved (2026-10-23)** — `docs/specs/2026-10-23-v0.1-design.md`; §16 logs the
   revisions found while planning, plus the UI decision (§16.6: FastAPI + HTMX + Jinja2 for v0.2).

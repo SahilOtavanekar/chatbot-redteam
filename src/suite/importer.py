@@ -15,9 +15,14 @@ order, no timestamps) and written atomically (temp file in the folder, then ``os
 crash never leaves a half-written file. Every prompt is validated by the v0.1 ``Prompt`` model
 before anything is written, and the written folder is read back with ``load_pack`` as a
 self-check. The generated files are git-ignored: regenerate them, never edit them.
+
+A re-import leaves the folder holding exactly this run's product: once the new files are written,
+any ``LLMnn.yaml`` or ``COVERAGE.md`` from an earlier run that this run did not write is deleted.
+No other file in the folder is touched, and nothing is deleted if the import fails first.
 """
 
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from importlib import metadata
@@ -42,6 +47,9 @@ from suite.prompts import (
 
 SOURCE_GARAK = "garak"
 COVERAGE_FILE = "COVERAGE.md"
+# The pack files the importer generates: one per OWASP category, e.g. LLM07.yaml. ASCII-only, and
+# matched against the whole name, so LLM-notes.yaml, llm07.yaml or LLM07.yaml.bak are not ours.
+_CATEGORY_FILE = re.compile(r"^LLM\d\d\.yaml$", re.ASCII)
 _REGENERATE = "git-ignored — regenerate, don't edit."
 
 
@@ -114,7 +122,10 @@ def import_source(
 
     ``source`` must be ``"garak"``. Every mapped dataset is loaded and every prompt validated
     before the first file is written, so a bad dataset, canary or repeat leaves ``out_dir``
-    untouched. Raises ``ConfigError`` for an unknown source, a canary with fewer than
+    untouched. After writing, stale generated files from an earlier run (``LLMnn.yaml`` names not
+    produced this time) are removed; anything else in ``out_dir`` is left alone.
+
+    Raises ``ConfigError`` for an unknown source, a canary with fewer than
     ``MIN_CONTAIN_CHARS`` ASCII letters or digits, a missing or unreadable dataset, a prompt the
     pack model refuses, or (after writing) an output folder that does not load as a valid pack.
     """
@@ -146,6 +157,10 @@ def import_source(
         path = out_dir / file_name
         _atomic_write_text(path, text)
         files.append(path)
+    # Only now, with the new set safely on disk, drop the files an earlier run left behind that
+    # this run did not write (a category that left the map), so the folder is exactly this run's
+    # product. A failure before this point never reaches here, so it cannot delete a good baseline.
+    _prune_stale(out_dir, keep=set(texts))
 
     built = [prompt for section in sections for prompt in section.prompts]
     _self_check(out_dir, built)
@@ -264,6 +279,22 @@ def _render_coverage(sections: list[_Section]) -> str:
         note = COVERED[code].replace("|", "\\|")
         lines.append(f"| {code} | {name} | {note} |")
     return "\n".join(lines) + "\n"
+
+
+def _is_managed(name: str) -> bool:
+    """True for a name the importer generates: ``LLMnn.yaml`` (n a digit) or ``COVERAGE.md``."""
+    return name == COVERAGE_FILE or _CATEGORY_FILE.fullmatch(name) is not None
+
+
+def _prune_stale(out_dir: Path, *, keep: set[str]) -> None:
+    """Delete the managed files in ``out_dir`` that this run did not write.
+
+    Only names the importer itself generates are touched (``_is_managed``); a file anyone else put
+    there, such as notes or a pack with a different name, is left alone.
+    """
+    for entry in out_dir.iterdir():
+        if entry.name not in keep and _is_managed(entry.name) and entry.is_file():
+            entry.unlink()
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

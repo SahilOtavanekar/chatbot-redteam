@@ -526,15 +526,17 @@ def test_import_garak_writes_baseline(tmp_path, capsys):
         rf"imported \d+ prompts across \d+ categor(?:y|ies) → {re.escape(str(out_dir))}\n",
         captured.out,
     )
-    assert (out_dir / "LLM07.yaml").is_file()
-    assert (out_dir / "COVERAGE.md").is_file()
+    for name in ("LLM05.yaml", "LLM06.yaml", "LLM07.yaml", "COVERAGE.md"):
+        assert (out_dir / name).is_file(), name
     pack = load_pack(out_dir)  # the folder is an ordinary pack
     count, categories, noun = re.fullmatch(
         r"imported (\d+) prompts across (\d+) (categor(?:y|ies)) .*\n", captured.out
     ).groups()
     assert len(pack.prompts) == int(count)
     assert len({p.category for p in pack.prompts}) == int(categories)
-    assert noun == ("category" if categories == "1" else "categories")  # Phase 1 has one
+    assert {p.category for p in pack.prompts} == {"LLM05", "LLM06", "LLM07"}
+    assert categories == "3"
+    assert noun == "categories"  # Phase A imports three categories
 
 
 @pytest.mark.parametrize(

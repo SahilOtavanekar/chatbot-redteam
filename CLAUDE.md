@@ -5,12 +5,18 @@ chatbot API **in parallel**, judges each reply deterministically, queues the res
 review, and generates an OWASP-aligned report. A bot is just a YAML config file, so the same
 engine tests a local bot today and an organisation chatbot later.
 
-**Status (2026-10-26): v0.1 built (Tasks 1–16 done, final review fixes applied); Tasks 17–18
-wait for Sahil's prompt text; branch `feat/v0.1` pushed, CI green.**
-**v0.2 importer Phase 1 is built and validated** on branch `feat/v0.2-importer` (stacked on
-`feat/v0.1`, **unpushed**, needs its own PR): `suite import --source garak` generates a git-ignored
-OWASP baseline that is **LLM07 only**, and `--pack` is repeatable. Details: `docs/HANDOFF.md`,
-`docs/validation/v0.2-importer.md`, spec `docs/specs/2026-10-26-v0.2-importer-design.md`.
+**Status (2026-10-26): three stacked branches.**
+- `feat/v0.1` — v0.1 engine, built + reviewed, pushed, CI green. (Tasks 17–18 lab/Gandalf packs
+  still want Sahil's prompt text; largely superseded by the importer for the lab bot.) PR not opened.
+- `feat/v0.2-importer` (on v0.1) — importer **Phase 1 built, validated, reviewed; pushed; CI green;
+  PR #1 open** → https://github.com/SahilOtavanekar/chatbot-redteam/pull/1. `suite import --source
+  garak` generates a git-ignored **LLM07** baseline; `--pack` is repeatable.
+- `feat/v0.3-owasp-coverage` (on v0.2) — **PLANNED, NOT BUILT.** Roadmap to cover all ten OWASP
+  categories honestly (7 rule-judged packs, LLM08 planted-marker template, LLM03/04 review checklist).
+  Spec `docs/specs/2026-10-26-v0.3-owasp-coverage-design.md`; Phase A (LLM05/06) plan
+  `docs/superpowers/plans/2026-10-26-v0.3-phase-a-llm05-06.md`.
+
+**Resume tomorrow:** build v0.3 **Phase A** (LLM05/06) subagent-driven from its plan (see HANDOFF).
 Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
 (see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
 Mock validation: `docs/validation/v0.1-mock.md`.

@@ -5,12 +5,15 @@ hands back plain data, so the views never touch SQLite or ``run.json`` directly.
 from a URL, so it is untrusted: ``resolve_run_dir`` is the only way to turn one into a path.
 """
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from suite.evidence import read_run_json
 from suite.models import ConfigError
+from suite.prompts import OWASP_LLM_2025
+from suite.report import VERDICT_LEGEND, ReportData, build_report_data, run_facts
 from suite.web.settings import WebSettings
 
 UNREADABLE = "unreadable"
@@ -33,6 +36,26 @@ class RunSummary:
     finalized: bool
     totals: dict[str, int]
     readable: bool
+
+
+@dataclass(frozen=True)
+class RunDetail:
+    """Everything the run page shows: the report data, the header facts and the verdict legend."""
+
+    run_id: str
+    report: ReportData
+    facts: list[tuple[str, str]]
+    legend: str
+
+
+@dataclass(frozen=True)
+class CoverageRow:
+    """One OWASP LLM Top 10 category: whether the run has any prompts for it, and how many."""
+
+    code: str
+    name: str
+    present: bool
+    prompt_count: int
 
 
 def resolve_run_dir(settings: WebSettings, run_id: str) -> Path | None:
@@ -104,3 +127,42 @@ def _totals(summary: object) -> dict[str, int]:
     if not isinstance(summary, dict):
         return {}
     return {str(key): count for key, count in summary.items() if isinstance(count, int)}
+
+
+def get_run(settings: WebSettings, run_id: str) -> RunDetail | None:
+    """Return the detail for one run, or ``None`` if it is unknown or has no readable evidence.
+
+    The report is built the way ``suite finalize`` would label it: final once the run has a
+    ``finalized_at``, otherwise a draft whose queued attempts still count as awaiting review.
+    """
+    report = _load_report(settings, run_id)
+    if report is None:
+        return None
+    return RunDetail(run_id, report, run_facts(report.run), VERDICT_LEGEND)
+
+
+def coverage(settings: WebSettings, run_id: str) -> list[CoverageRow] | None:
+    """Return one row per OWASP LLM Top 10 category, in order, or ``None`` for an unknown run.
+
+    A category is ``present`` when at least one prompt in the run is tagged with it. Counts are
+    prompts, not attempts. A category with no prompts is a gap in coverage, not a pass.
+    """
+    report = _load_report(settings, run_id)
+    if report is None:
+        return None
+    counts = Counter(prompt.category for prompt in report.prompts)
+    return [
+        CoverageRow(code, name, counts[code] > 0, counts[code])
+        for code, name in OWASP_LLM_2025.items()
+    ]
+
+
+def _load_report(settings: WebSettings, run_id: str) -> ReportData | None:
+    run_dir = resolve_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    try:
+        final = bool(read_run_json(run_dir).get("finalized_at"))
+        return build_report_data(run_dir, final=final)
+    except ConfigError:  # run.json or evidence.db missing or unreadable
+        return None

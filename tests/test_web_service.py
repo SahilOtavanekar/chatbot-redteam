@@ -4,7 +4,8 @@ import pytest
 
 from suite.evidence import read_run_json, write_run_json
 from suite.models import Verdict
-from suite.web.service import list_runs, resolve_run_dir
+from suite.prompts import OWASP_LLM_2025
+from suite.web.service import coverage, get_run, list_runs, resolve_run_dir
 from suite.web.settings import WebSettings
 from tests.factories import make_run_dir
 
@@ -86,3 +87,58 @@ def test_list_runs_is_newest_first_then_by_name(tmp_path):
     (tmp_path / "broken").mkdir()
     ids = [r.run_id for r in list_runs(WebSettings(results_dir=tmp_path))]
     assert ids == [newest.name, first.name, second.name, "broken"]
+
+
+def test_get_run_matches_build_report_data(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    detail = get_run(WebSettings(results_dir=tmp_path), run.name)
+    assert detail.report.totals[Verdict.PASS] == 1
+    assert ("Endpoint", "t") in detail.facts
+
+
+def test_get_run_none_for_missing(tmp_path):
+    assert get_run(WebSettings(results_dir=tmp_path), "nope") is None
+
+
+def test_coverage_lists_all_ten_categories(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.PASS, "ok")])
+    rows = coverage(WebSettings(results_dir=tmp_path), run.name)
+    assert [r.code for r in rows] == list(OWASP_LLM_2025)
+    present = {r.code: r.present for r in rows}
+    assert present["LLM07"] and not present["LLM01"]
+
+
+def test_get_run_is_a_draft_until_finalized(tmp_path):
+    run = make_run_dir(tmp_path, [("P-1#1", "LLM07", Verdict.NEEDS_REVIEW, "hmm")])
+    settings = WebSettings(results_dir=tmp_path)
+    draft = get_run(settings, run.name)
+    assert not draft.report.final and draft.report.pending == 1
+    write_run_json(run, {**read_run_json(run), "finalized_at": "2026-10-24T09:00:00+00:00"})
+    final = get_run(settings, run.name)
+    assert final.report.final and final.report.totals[Verdict.INCONCLUSIVE] == 1
+
+
+def test_get_run_none_when_evidence_is_missing(tmp_path):
+    (tmp_path / "bare").mkdir()
+    (tmp_path / "bare" / "run.json").write_text("{}", encoding="utf-8")
+    assert get_run(WebSettings(results_dir=tmp_path), "bare") is None
+    assert coverage(WebSettings(results_dir=tmp_path), "bare") is None
+
+
+def test_coverage_none_for_missing_run(tmp_path):
+    assert coverage(WebSettings(results_dir=tmp_path), "../nope") is None
+
+
+def test_coverage_counts_prompts_not_attempts(tmp_path):
+    run = make_run_dir(
+        tmp_path,
+        [
+            ("P-1#1", "LLM07", Verdict.PASS, "ok"),
+            ("P-1#2", "LLM07", Verdict.PASS, "ok"),
+            ("P-2#1", "LLM07", Verdict.FAIL, "leak"),
+            ("P-3#1", "LLM05", Verdict.PASS, "ok"),
+        ],
+    )
+    rows = {r.code: r for r in coverage(WebSettings(results_dir=tmp_path), run.name)}
+    assert (rows["LLM07"].prompt_count, rows["LLM05"].prompt_count) == (2, 1)
+    assert rows["LLM01"].prompt_count == 0 and rows["LLM07"].name == OWASP_LLM_2025["LLM07"]

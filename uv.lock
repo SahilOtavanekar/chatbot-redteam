@@ -612,6 +612,7 @@ name = "chatbot-redteam"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "jsonpath-ng" },
@@ -619,6 +620,7 @@ dependencies = [
     { name = "pyrit" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -628,11 +630,11 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
     { name = "types-pyyaml" },
-    { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27.2" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jsonpath-ng", specifier = ">=1.6" },
@@ -640,6 +642,7 @@ requires-dist = [
     { name = "pyrit", specifier = "==1.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6" },
+    { name = "uvicorn", specifier = ">=0.32" },
 ]
 
 [package.metadata.requires-dev]
@@ -649,7 +652,6 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-pyyaml" },
-    { name = "uvicorn", specifier = ">=0.32" },
 ]
 
 [[package]]

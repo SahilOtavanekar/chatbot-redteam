@@ -14,22 +14,22 @@ the organisation's own chatbots with this.
 Split out of the `ai-red-teaming` lab (`C:\dev\ai-red-teaming`), whose vulnerable bot is the first
 owned test target.
 
-## Resume point (2026-10-26 evening) — build v0.3 Phase A tomorrow
+## Resume point (2026-10-27) — all merged to main; next is Phase B
 
-Three stacked branches: `feat/v0.1` → `feat/v0.2-importer` → `feat/v0.3-owasp-coverage` (current).
-- **v0.1:** built, reviewed, pushed, CI green. PR not opened.
-- **v0.2 importer (Phase 1, LLM07):** built, validated, reviewed, pushed, CI green, **PR #1 open**.
-- **v0.3 full-OWASP-coverage:** **planned only, no code.** Spec
-  `docs/specs/2026-10-26-v0.3-owasp-coverage-design.md` (honest contract: all ten represented — 7
-  rule-judged packs, LLM08 planted-marker template, LLM03/04 review checklist; prompts only from
-  PyRIT's bundled local garak datasets; LLM05/06 payloads sent as-is since garak ships no carriers).
-  **Next action:** build **Phase A (LLM05 + LLM06)** from
-  `docs/superpowers/plans/2026-10-26-v0.3-phase-a-llm05-06.md`, subagent-driven (4 tasks: wire the
-  `shell_command_output` detector; add 4 garak map rows; stale-file pruning; CLI/validation). Then
-  Phases B (LLM09), C (LLM01 scorer), D (LLM10 resource detector), E (LLM08 template), F (LLM03/04
-  checklist) — each its own spec/plan (see roadmap §4).
-- Decisions locked while planning v0.3: all-ten honest mix; payloads-as-is; package-hallucination
-  spike confirmed the scorer runs offline but needs PyRIT's `garak_pypi_packages` list vendored (Phase B).
+**v0.1 + v0.2 importer + v0.3 Phase A are MERGED to `main`** (PRs #2/#1/#3, CI green, 758 tests pass).
+The baseline covers **LLM05/06/07** (3 of 10 OWASP categories). Feature branches feat/v0.1,
+feat/v0.2-importer, feat/v0.3-owasp-coverage are merged (safe to delete).
+
+**Next action:** Brainstorm → spec → plan → build **Phase B (LLM09, misinformation / package
+hallucination)** on a new branch off `main`, subagent-driven. It needs a one-time vendoring of
+PyRIT's `garak_pypi_packages` remote list into a committed data file (the offline-scorer spike
+confirmed `PackageHallucinationScorer` runs offline but needs that list). Then Phases C (LLM01
+scorer), D (LLM10 resource detector), E (LLM08 template), F (LLM03/04 checklist) — roadmap in
+`docs/specs/2026-10-26-v0.3-owasp-coverage-design.md` §4. LLM03/04 are not prompt-testable.
+
+Product layers not started: UI (FastAPI+HTMX, spec §16.6) and automation/scheduling (v0.3+).
+Known flaky test on Windows CI: `test_cli.py::test_run_finalize_compare_against_mockbot` (mock
+e2e, timing) — passed on re-run; worth stabilising.
 
 ## Where we are (v0.1 / v0.2 history)
 

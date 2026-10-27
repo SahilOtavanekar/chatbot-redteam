@@ -5,21 +5,21 @@ chatbot API **in parallel**, judges each reply deterministically, queues the res
 review, and generates an OWASP-aligned report. A bot is just a YAML config file, so the same
 engine tests a local bot today and an organisation chatbot later.
 
-**Status (2026-10-26): three stacked branches.**
-- `feat/v0.1` — v0.1 engine, built + reviewed, pushed, CI green. (Tasks 17–18 lab/Gandalf packs
-  still want Sahil's prompt text; largely superseded by the importer for the lab bot.) PR not opened.
-- `feat/v0.2-importer` (on v0.1) — importer **Phase 1 built, validated, reviewed; pushed; CI green;
-  PR #1 open** → https://github.com/SahilOtavanekar/chatbot-redteam/pull/1. `suite import --source
-  garak` generates a git-ignored **LLM07** baseline; `--pack` is repeatable.
-- `feat/v0.3-owasp-coverage` (on v0.2) — **PLANNED, NOT BUILT.** Roadmap to cover all ten OWASP
-  categories honestly (7 rule-judged packs, LLM08 planted-marker template, LLM03/04 review checklist).
-  Spec `docs/specs/2026-10-26-v0.3-owasp-coverage-design.md`; Phase A (LLM05/06) plan
-  `docs/superpowers/plans/2026-10-26-v0.3-phase-a-llm05-06.md`.
+**Status (2026-10-27): v0.1 + v0.2 importer + v0.3 Phase A all MERGED to `main`** (PRs #2, #1, #3;
+CI green; 758 tests pass on main). The tool runs any chatbot endpoint, judges deterministically,
+and `suite import --source garak` generates a git-ignored OWASP **baseline covering LLM05/06/07**
+(62 prompts); `--pack` is repeatable to compose with your own packs.
 
-**Resume tomorrow:** build v0.3 **Phase A** (LLM05/06) subagent-driven from its plan (see HANDOFF).
-Read `docs/HANDOFF.md` first — it is the resume point. Spec: `docs/specs/2026-10-23-v0.1-design.md`
-(see §16). Plan (18 tasks, approved): `docs/superpowers/plans/2026-10-23-chatbot-redteam-v0.1.md`.
-Mock validation: `docs/validation/v0.1-mock.md`.
+**Where coverage stands: 3 of 10 OWASP LLM categories.** The honest roadmap to the rest is in
+`docs/specs/2026-10-26-v0.3-owasp-coverage-design.md` (§4 phases): **Phase B = LLM09** (next; needs
+vendoring PyRIT's `garak_pypi_packages` list), C = LLM01 scorer, D = LLM10 resource detector,
+E = LLM08 planted-marker template, F = LLM03/04 review checklist. LLM03/04 are not prompt-testable.
+
+**Resume point:** Brainstorm → spec → plan → build **Phase B (LLM09)** on a new branch off `main`,
+subagent-driven. Also open: UI (FastAPI+HTMX, v0.2 decision) and automation (v0.3+) are the product
+layers, not started. Read `docs/HANDOFF.md` first.
+Earlier specs: v0.1 `docs/specs/2026-10-23-v0.1-design.md` (§16); v0.2 importer
+`docs/specs/2026-10-26-v0.2-importer-design.md`; validations in `docs/validation/`.
 
 ## How to resume the build (next session)
 

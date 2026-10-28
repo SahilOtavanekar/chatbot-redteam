@@ -273,6 +273,32 @@ def _cells(path):
         csv.field_size_limit(previous)
 
 
+def test_review_queue_skips_rows_with_a_blank_attempt_id(tmp_path):
+    run = make_run_dir(
+        tmp_path,
+        [
+            ("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "first"),
+            ("P-2#1", "LLM06", Verdict.NEEDS_REVIEW, "second"),
+        ],
+    )
+    write_reports(run, final=False)
+    path = run / "review.csv"
+    real = [row for row in _cells(path)[1:] if row]  # what the queue held before the stray rows
+    width = len(REVIEW_COLUMNS)
+    blank = [""] * width
+    padded = [" \t "] + [""] * (width - 1)  # an id of whitespace only, other cells empty
+    noted = ["  ", *["x"] * (width - 1)]  # a whitespace id on a row that has other text
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(REVIEW_COLUMNS)
+        writer.writerows([real[0], blank, real[1], padded, noted, blank])  # blanks mixed in, last
+
+    items = review_queue(WebSettings(results_dir=tmp_path), run.name)
+
+    assert items is not None
+    assert [i.attempt_id for i in items] == ["P-1#1", "P-2#1"]  # file order, no phantom card
+
+
 def test_set_verdict_writes_back_and_finalize_applies(tmp_path):
     run = make_run_dir(tmp_path, [("P-1#1", "LLM01", Verdict.NEEDS_REVIEW, "reply")])
     write_reports(run, final=False)
@@ -374,8 +400,8 @@ def test_set_verdict_rejects_a_blank_attempt_id_and_writes_nothing(tmp_path):
         csv.writer(handle).writerows([*rows, [""] * len(REVIEW_COLUMNS)])
     before = path.read_bytes()
     s = WebSettings(results_dir=tmp_path)
-    assert review_queue(s, run.name)[1].attempt_id == ""  # the UI can be handed this row
-    for attempt_id in ("", "   "):
+    assert [i.attempt_id for i in review_queue(s, run.name)] == ["P-1#1"]  # the queue hides it
+    for attempt_id in ("", "   "):  # but a hand-made POST could still send one
         write = set_review_verdict(s, run.name, attempt_id, "pass", "x")
         assert not write.ok and write.item is None and write.error
     assert path.read_bytes() == before  # no phantom verdict that would block finalize

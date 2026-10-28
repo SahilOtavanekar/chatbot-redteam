@@ -297,8 +297,8 @@ def review_queue(settings: WebSettings, run_id: str) -> list[ReviewItem] | None:
 
     The file is the draft queue ``suite run`` writes. A run with no ``review.csv`` has an empty
     queue (``[]``), and an unknown or unsafe ``run_id`` is ``None``. Rows come back in file order
-    and a missing column reads as an empty string. Raises ConfigError if the file cannot be read
-    (locked, or not valid UTF-8 / CSV).
+    and a missing column reads as an empty string; a row whose ``attempt_id`` is blank is left
+    out. Raises ConfigError if the file cannot be read (locked, or not valid UTF-8 / CSV).
     """
     run_dir = resolve_run_dir(settings, run_id)
     if run_dir is None:
@@ -306,7 +306,9 @@ def review_queue(settings: WebSettings, run_id: str) -> list[ReviewItem] | None:
     path = run_dir / REVIEW_CSV
     if not path.is_file():
         return []
-    return [ReviewItem(**row) for row in _read_review_rows(path)]
+    # A row with no attempt id (a stray all-commas line) is skipped: it is not an attempt, and a
+    # card for it would post an empty id that no verdict can match.
+    return [ReviewItem(**row) for row in _read_review_rows(path) if row["attempt_id"].strip()]
 
 
 def review_listing(settings: WebSettings, run_id: str) -> ReviewListing | None:

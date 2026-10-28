@@ -244,6 +244,70 @@ def test_an_untrusted_host_is_rejected_before_any_route(tmp_path, host):
         assert r.status_code == 400
 
 
+# --- a non-loopback --host is the operator's choice, so its own Host must be answered ----------
+
+
+def _bound_client(results_dir: Path, host: str) -> TestClient:
+    """A client for an app started with ``suite web --host <host>``."""
+    app = create_app(WebSettings(results_dir=results_dir, host=host))
+    return TestClient(app, base_url="http://testserver")
+
+
+def test_a_lan_bind_answers_its_own_host_and_still_refuses_others(tmp_path):
+    c = _bound_client(tmp_path, "192.168.1.5")
+    for path in ("/", f"{API}/runs"):
+        assert c.get(path, headers={"Host": "192.168.1.5:8787"}).status_code == 200
+        assert c.get(path, headers={"Host": "192.168.1.5"}).status_code == 200
+        assert c.get(path, headers={"Host": "evil.example"}).status_code == 400
+        assert c.get(path, headers={"Host": "192.168.1.6:8787"}).status_code == 400
+    # The loopback names and the test client's host are still trusted.
+    assert c.get("/", headers={"Host": "127.0.0.1:8787"}).status_code == 200
+    assert c.get("/", headers={"Host": "localhost"}).status_code == 200
+    assert c.get("/").status_code == 200  # Host: testserver
+
+
+def test_a_named_bind_is_matched_regardless_of_case(tmp_path):
+    c = _bound_client(tmp_path, "Redteam.Lan")
+    assert c.get("/", headers={"Host": "redteam.lan:8787"}).status_code == 200
+    assert c.get("/", headers={"Host": "REDTEAM.LAN"}).status_code == 200
+    assert c.get("/", headers={"Host": "evil.example"}).status_code == 400
+
+
+def test_a_same_origin_write_works_on_a_lan_bind(tmp_path):
+    run = _decided_run(tmp_path)
+    c = _bound_client(tmp_path, "192.168.1.5")
+    host = "192.168.1.5:8787"
+    r = c.post(f"/runs/{run.name}/finalize", headers={"Host": host, "Origin": f"http://{host}"})
+    assert r.status_code == 200 and "Finalized" in r.text
+    assert _finalized(tmp_path, run)
+
+
+@pytest.mark.parametrize("host", ["2001:db8::5", "[2001:db8::5]"])
+def test_an_ipv6_bind_is_matched_in_its_bracketed_header_form(tmp_path, host):
+    c = _bound_client(tmp_path, host)
+    assert c.get("/", headers={"Host": "[2001:db8::5]:8787"}).status_code == 200
+    assert c.get("/", headers={"Host": "[2001:db8::5]"}).status_code == 200
+    assert c.get("/", headers={"Host": "[2001:db8::6]:8787"}).status_code == 400
+    assert c.get("/", headers={"Host": "evil.example"}).status_code == 400
+    assert c.get("/", headers={"Host": "[::1]:8787"}).status_code == 200  # loopback stays trusted
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", ""])
+def test_a_wildcard_bind_accepts_any_host(tmp_path, host):
+    # The operator chose to listen on every interface (the CLI warns), so no Host can be pinned.
+    c = _bound_client(tmp_path, host)
+    for header in ("anything.example", "10.1.2.3:8787", "evil.example:8787", "[2001:db8::5]:8787"):
+        assert c.get("/", headers={"Host": header}).status_code == 200, header
+
+
+def test_the_default_bind_is_unchanged(tmp_path):
+    c = _bound_client(tmp_path, "127.0.0.1")
+    assert c.get("/", headers={"Host": "evil.example"}).status_code == 400
+    assert c.get("/", headers={"Host": "192.168.1.5:8787"}).status_code == 400
+    assert c.get("/", headers={"Host": "127.0.0.1:8787"}).status_code == 200
+    assert c.get("/").status_code == 200
+
+
 def test_a_rebound_domain_cannot_write_even_with_a_matching_origin(tmp_path):
     # DNS rebinding: the page's origin IS the rebound domain, so Origin equals Host and the
     # same-origin rule alone passes. The host check is what stops it.

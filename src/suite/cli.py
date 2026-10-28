@@ -38,6 +38,7 @@ DEFAULT_RESULTS_DIR = Path("results")
 DEFAULT_BASELINE_DIR = Path("prompts/baseline")
 DEFAULT_WEB_HOST = "127.0.0.1"  # loopback: the UI has no login, so it is local-only by default
 DEFAULT_WEB_PORT = 8787
+MIN_PORT, MAX_PORT = 0, 65535  # port 0 asks the OS for a free one
 SOURCE_GARAK = "garak"  # the one import source; suite.importer (lazy, loads PyRIT) is the authority
 
 # The order of the run summary line.
@@ -54,8 +55,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USER_ERROR
     except KeyboardInterrupt:
+        # Only ``run`` leaves a partial run folder; ``web`` (like the rest) writes none.
         results_dir = getattr(args, "results_dir", None)
-        where = f" — partial results were written under {results_dir}" if results_dir else ""
+        partial = getattr(args, "command", None) == "run" and results_dir
+        where = f" — partial results were written under {results_dir}" if partial else ""
         print(f"interrupted{where}", file=sys.stderr)
         return EXIT_INTERRUPTED
     except Exception as exc:
@@ -295,6 +298,9 @@ def _cmd_web(args: argparse.Namespace) -> int:
     from suite.web.settings import WebSettings
 
     settings = WebSettings(results_dir=args.results_dir, host=args.host, port=args.port)
+    # Checked first: getaddrinfo wraps an out-of-range port, so _port_free would call it "in use".
+    if not MIN_PORT <= settings.port <= MAX_PORT:
+        raise ConfigError(f"port must be between {MIN_PORT} and {MAX_PORT}, got {settings.port}")
     if not _port_free(settings.host, settings.port):
         raise ConfigError(f"port {settings.port} on {settings.host} is already in use")
     if settings.host != DEFAULT_WEB_HOST:

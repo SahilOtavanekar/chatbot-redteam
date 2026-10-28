@@ -28,10 +28,15 @@ from suite.web.settings import WebSettings
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-# The only ``Host`` names the app answers to. ``testserver`` is the test client's own host.
+# The ``Host`` names the app always answers to. ``testserver`` is the test client's own host.
 # ``[::1]`` is how a browser writes the IPv6 loopback in a Host header (the bare ``::1`` is kept
-# too, in case a client sends it that way).
+# too, in case a client sends it that way). A non-loopback ``--host`` adds its own name to these
+# (see ``allowed_hosts``).
 TRUSTED_HOSTS = ["127.0.0.1", "localhost", "::1", "[::1]", "testserver"]
+
+# Bind addresses that mean "every interface". Nothing can be pinned for them: whatever address a
+# client uses to reach the machine is the ``Host`` it sends.
+WILDCARD_BINDS = frozenset({"0.0.0.0", "::", ""})
 
 # Methods that change nothing, so a cross-origin one is harmless (the browser's same-origin policy
 # already stops the other page from reading the reply). Every other method is a write.
@@ -114,6 +119,22 @@ def build_templates() -> Jinja2Templates:
     return Jinja2Templates(env=env)
 
 
+def allowed_hosts(bind_host: str) -> list[str]:
+    """The ``Host`` values the app answers to when it listens on ``bind_host``.
+
+    The loopback names (and ``testserver``) are always trusted. A concrete ``bind_host`` (a LAN
+    address or a name) is added, since that is what a client reaching the app sends; a bare IPv6
+    literal also gets its bracketed form, the only way a Host header can carry one. A wildcard bind
+    (``0.0.0.0``, ``::`` or empty) answers to any ``Host``: the operator has opted out of the
+    local-only model, and ``suite web`` warns about it."""
+    if bind_host in WILDCARD_BINDS:
+        return ["*"]
+    hosts = [*TRUSTED_HOSTS, bind_host]
+    if ":" in bind_host and not bind_host.startswith("["):
+        hosts.append(f"[{bind_host}]")
+    return hosts
+
+
 def create_app(settings: WebSettings) -> FastAPI:
     """Build the app: ``settings`` and ``templates`` on ``app.state``, ``/static`` mounted, the
     JSON API (``/api/v1``) and the HTML views included, behind the request guard.
@@ -126,7 +147,7 @@ def create_app(settings: WebSettings) -> FastAPI:
         title="chatbot-redteam",
         middleware=[
             Middleware(NoFraming),
-            Middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS),
+            Middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts(settings.host)),
             Middleware(SameOriginGuard),
         ],
     )

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Run {{ detail.run_id }} - chatbot-redteam{% endblock %}
+{% block content %}
+{% set report = detail.report %}
+{% set run_id = detail.run_id %}
+<h1>Run <code>{{ run_id }}</code></h1>
+{% set current = "report" %}
+{% include "_run_nav.html" %}
+{% if report.final %}
+<p class="banner final">FINAL</p>
+{% else %}
+<p class="banner draft">DRAFT &mdash; {{ report.pending }} attempts awaiting review{% if report.pending %} &middot; <a href="/runs/{{ run_id | urlencode }}/review">open the review queue</a>{% endif %}</p>
+{% endif %}
+<dl class="facts">
+{% for label, value in detail.facts %}
+  <dt>{{ label }}</dt><dd>{{ value }}</dd>
+{% endfor %}
+</dl>
+<p class="legend">{{ detail.legend }}</p>
+
+<h2>Summary</h2>
+<div class="table-wrap">
+<table>
+  <tr><th>Prompts</th>{% for v in report.totals %}<th>{{ v | verdict }}</th>{% endfor %}</tr>
+  <tr><td class="num">{{ report.prompts | length }}</td>{% for count in report.totals.values() %}<td class="num">{{ count }}</td>{% endfor %}</tr>
+</table>
+</div>
+<p class="note">Counts are prompts. A prompt's verdict is the worst of its attempts: Fail, then Inconclusive, then Needs review, then Pass.</p>
+
+<h2>By OWASP LLM Top 10 category</h2>
+{% if report.categories %}
+<div class="table-wrap">
+<table>
+  <tr><th>Code</th><th>Category</th><th>Prompts</th><th>Pass</th><th>Fail</th><th>Inconclusive</th><th>Needs review</th><th>Pass rate</th></tr>
+{% for c in report.categories %}
+  <tr>
+    <td>{{ c.code }}</td><td>{{ c.name }}</td>
+    <td class="num">{{ c.total }}</td><td class="num">{{ c.passed }}</td><td class="num">{{ c.failed }}</td>
+    <td class="num">{{ c.inconclusive }}</td><td class="num">{{ c.needs_review }}</td>
+    <td class="num">{{ c.pass_rate }}%</td>
+  </tr>
+{% endfor %}
+</table>
+</div>
+<p class="note">Pass rate = prompts with verdict Pass, as a share of the category's prompts. Inconclusive and Needs review are not passes. <a href="/runs/{{ run_id | urlencode }}/coverage">See which categories have no prompts at all.</a></p>
+{% else %}
+<p>No prompts were recorded for this run.</p>
+{% endif %}
+
+<h2>Prompts</h2>
+{% for p in report.prompts %}
+<section class="prompt">
+  <h3>{{ p.prompt_id }} <span class="cat">{{ p.category }}</span> {{ badge(p.verdict, p.attempts | map(attribute="decided_by")) }}</h3>
+  <p><strong>Pass if:</strong> {{ p.pass_if or "(not specified)" }}</p>
+  <details>
+    <summary>Prompt sent</summary>
+    <pre>{{ p.prompt_text }}</pre>
+  </details>
+{% for a in p.attempts %}
+  <div class="attempt">
+    <p><strong>{{ a.attempt_id }}</strong> {{ badge(a.verdict, [a.decided_by]) }}
+      <span class="meta">decided by {{ a.decided_by.value }}{% if a.hint %} &middot; hint: {{ a.hint }}{% endif %}{% if a.error_kind %} &middot; error: {{ a.error_kind }}{% endif %}{% if a.http_status is not none %} &middot; HTTP {{ a.http_status }}{% endif %}{% if a.latency_ms is not none %} &middot; {{ a.latency_ms }} ms{% endif %}</span></p>
+{% if a.reasons %}
+    <ul class="reasons">
+{% for reason in a.reasons %}
+      <li>{{ reason }}</li>
+{% endfor %}
+    </ul>
+{% endif %}
+{% if a.human_note %}
+    <p><strong>Reviewer note:</strong> {{ a.human_note }}</p>
+{% endif %}
+{% if a.reply is none %}
+    <p class="meta">(no reply)</p>
+{% elif a.reply == "" %}
+    <p class="meta">(empty reply)</p>
+{% else %}
+    <details>
+      <summary>Reply ({{ a.reply | length }} characters)</summary>
+      <pre>{{ a.reply }}</pre>
+    </details>
+{% endif %}
+  </div>
+{% endfor %}
+</section>
+{% endfor %}
+{% endblock %}

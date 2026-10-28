@@ -1,0 +1,70 @@
+/* chatbot-redteam web UI. Small on purpose: system fonts, one column, readable on a phone.
+   The verdict badges reuse the report's look (colour plus a different border style per verdict,
+   so they never rely on colour alone). */
+:root {
+  --text: #1b1b1b; --muted: #555; --bg: #fff; --panel: #f3f4f6; --line: #c9ccd1; --link: #1a4fa0;
+  --pass-bg: #e3f1e6; --pass: #2d6a3e; --fail-bg: #fde4e1; --fail: #a4231a;
+  --warn-bg: #fff4d6; --warn: #b36b00; --info-bg: #e4ebf7; --info: #34568b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e6e6e6; --muted: #a8adb4; --bg: #15171a; --panel: #1f2328; --line: #3a3f46; --link: #8ab4f8;
+    --pass-bg: #17301f; --pass: #6fcf8a; --fail-bg: #3a1a17; --fail: #f08a80;
+    --warn-bg: #33290f; --warn: #e0a64a; --info-bg: #182337; --info: #8fb0e8;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif; line-height: 1.45; color: var(--text); background: var(--bg); }
+a { color: var(--link); }
+header.site { display: flex; gap: 1rem; align-items: baseline; padding: 0.6rem 1rem; background: var(--panel); border-bottom: 1px solid var(--line); }
+header.site .brand { font-weight: 700; text-decoration: none; color: var(--text); }
+main { max-width: 62rem; margin: 0 auto; padding: 1rem 1rem 3rem; }
+h1 { font-size: 1.5rem; margin: 0.5rem 0; overflow-wrap: anywhere; }
+h2 { font-size: 1.2rem; margin: 2rem 0 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--line); }
+h3 { margin: 0 0 0.4rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; overflow-wrap: anywhere; }
+nav.tabs { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0.5rem 0 1rem; }
+nav.tabs a { padding: 0.3rem 0.8rem; border: 1px solid var(--line); border-radius: 0.3rem; text-decoration: none; }
+nav.tabs a[aria-current="page"] { background: var(--panel); font-weight: 700; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+th, td { border: 1px solid var(--line); padding: 0.35rem 0.6rem; text-align: left; vertical-align: top; }
+th { background: var(--panel); }
+.num { text-align: right; }
+.banner { margin: 1rem 0; padding: 0.6rem 0.9rem; border: 2px solid; font-weight: 700; }
+.banner.draft { background: var(--warn-bg); border-color: var(--warn); }
+.banner.final { background: var(--pass-bg); border-color: var(--pass); }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; margin: 0.5rem 0 1rem; }
+dl.facts dt { font-weight: 600; }
+dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+.legend { margin: 1rem 0; padding: 0.6rem 0.9rem; background: var(--panel); border-left: 4px solid var(--muted); font-size: 0.92rem; }
+.note, .meta { color: var(--muted); font-size: 0.88rem; }
+.badge { display: inline-block; padding: 0 0.5rem; border: 2px solid; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
+.v-pass { background: var(--pass-bg); border-color: var(--pass); }
+.v-fail { background: var(--fail-bg); border-color: var(--fail); border-style: double; border-width: 4px; padding: 0 0.4rem; }
+.v-inconclusive { background: var(--warn-bg); border-color: var(--warn); border-style: dashed; }
+.v-needs_review { background: var(--info-bg); border-color: var(--info); border-style: dotted; }
+.v-none { border-color: var(--line); color: var(--muted); }
+.prompt, .item { margin: 1rem 0; padding: 0.6rem 0.9rem; border: 1px solid var(--line); border-radius: 0.4rem; }
+.cat { color: var(--muted); font-weight: 400; font-size: 0.9rem; }
+.attempt { margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px solid var(--line); }
+.attempt p { margin: 0.25rem 0; }
+ul.reasons { margin: 0.25rem 0; padding-left: 1.25rem; }
+pre { margin: 0.4rem 0; padding: 0.5rem 0.7rem; background: var(--panel); border: 1px solid var(--line); font-family: Consolas, "Courier New", monospace; font-size: 0.88rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+details > summary { cursor: pointer; }
+tr.gap td { background: var(--warn-bg); }
+tr.change-regressed td { background: var(--fail-bg); }
+tr.change-fixed td { background: var(--pass-bg); }
+.change { font-weight: 600; }
+.pass-if { margin: 0.25rem 0 0.6rem; }
+textarea { display: block; width: 100%; margin-top: 0.25rem; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 0.3rem; padding: 0.4rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+button, .compare select { font: inherit; padding: 0.4rem 1rem; border: 2px solid var(--link); border-radius: 0.3rem; background: var(--bg); color: var(--text); cursor: pointer; }
+button[aria-pressed="true"] { background: var(--link); color: var(--bg); font-weight: 700; }
+button.secondary { border-color: var(--line); }
+form.compare { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
+form.compare label { display: flex; flex-direction: column; font-weight: 600; }
+.error { padding: 0.5rem 0.8rem; background: var(--fail-bg); border-left: 4px solid var(--fail); }
+.saved, .status.ok { padding: 0.4rem 0.8rem; background: var(--pass-bg); border-left: 4px solid var(--pass); }
+.finalize { margin-top: 2rem; }
+.htmx-request button { opacity: 0.6; }

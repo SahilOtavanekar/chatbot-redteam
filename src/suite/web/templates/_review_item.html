@@ -1,0 +1,43 @@
+{# One attempt in the review queue, and the fragment a verdict POST swaps back in. ``run_id`` and
+   ``attempt_id`` are always set. ``item`` is the attempt (None when a save failed, so there is
+   nothing to show but the error). ``error``, ``saved`` and ``note`` (the note the reviewer typed)
+   are set only by the POST. Every value here is untrusted text, escaped by Jinja. #}
+{% set shown_error = error if error is defined else none %}
+{% set was_saved = saved if saved is defined else false %}
+{% set chosen = (item.verdict | trim | lower) if item else "" %}
+{% set note_text = item.note if item else (note if note is defined else "") %}
+<article class="item">
+{% if item %}
+  <h3>{{ item.attempt_id }} <span class="cat">{{ item.category }}</span></h3>
+  <p class="pass-if"><strong>Pass if:</strong> {{ item.pass_if or "(not specified)" }}</p>
+{% if item.hint %}
+  <p class="meta">Judge hint: {{ item.hint }}</p>
+{% endif %}
+  <details>
+    <summary>Prompt sent</summary>
+    <pre>{{ item.prompt }}</pre>
+  </details>
+  <p><strong>Reply</strong></p>
+{% if item.reply %}
+  <pre class="reply">{{ item.reply }}</pre>
+{% else %}
+  <p class="meta">(no reply)</p>
+{% endif %}
+{% else %}
+  <h3>{{ attempt_id }}</h3>
+{% endif %}
+{% if shown_error %}
+  <p class="error" role="alert">Not saved: {{ shown_error }}{% if not item %} (reload the page to see the reply again){% endif %}</p>
+{% endif %}
+  <form hx-post="/runs/{{ run_id | urlencode }}/review/{{ attempt_id | urlencode }}" hx-target="closest article" hx-swap="outerHTML">
+    <label>Note <textarea name="note" rows="2">{{ note_text }}</textarea></label>
+    <div class="actions">
+      <button type="submit" name="verdict" value="pass" aria-pressed="{{ 'true' if chosen == 'pass' else 'false' }}">Pass</button>
+      <button type="submit" name="verdict" value="fail" aria-pressed="{{ 'true' if chosen == 'fail' else 'false' }}">Fail</button>
+      <button type="submit" name="verdict" value="clear" class="secondary">Clear</button>
+    </div>
+  </form>
+{% if was_saved %}
+  <p class="saved" role="status">Saved{% if chosen %}: {{ chosen }}{% else %}: no verdict{% endif %}.</p>
+{% endif %}
+</article>

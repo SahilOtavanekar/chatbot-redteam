@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Review {{ run_id }} - chatbot-redteam{% endblock %}
+{% block content %}
+<h1>Review <code>{{ run_id }}</code></h1>
+{% set current = "review" %}
+{% include "_run_nav.html" %}
+{% if listing.error %}
+<p class="error" role="alert">Cannot read the review queue: {{ listing.error }}</p>
+{% elif not listing.items %}
+<p>Nothing to review: no attempt in this run is waiting for a human verdict.</p>
+{% else %}
+<p class="legend">{{ listing.items | length }} attempt{{ '' if listing.items | length == 1 else 's' }} need{{ 's' if listing.items | length == 1 }} a human verdict. Judge each reply against its Pass if line, then choose Pass or Fail (a note is optional). Each choice is saved to review.csv as you click. Finalize folds the verdicts into the run; an attempt left without one stays Inconclusive, never a Pass.</p>
+{% for item in listing.items %}
+{% set attempt_id = item.attempt_id %}
+{% include "_review_item.html" %}
+{% endfor %}
+<section class="finalize">
+  <h2>Finalize</h2>
+  <button type="button" hx-post="/runs/{{ run_id | urlencode }}/finalize" hx-target="#finalize-status" hx-swap="innerHTML" hx-confirm="Finalize this run? The verdicts saved so far are applied and the final reports are written.">Finalize run</button>
+  <div id="finalize-status" aria-live="polite"></div>
+</section>
+{% endif %}
+{% endblock %}

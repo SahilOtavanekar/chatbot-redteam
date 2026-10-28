@@ -1,0 +1,6 @@
+{# The tabs of one run. Included with ``run_id`` in scope and ``current`` set to the open tab. #}
+<nav class="tabs" aria-label="Run pages">
+  <a href="/runs/{{ run_id | urlencode }}"{% if current == "report" %} aria-current="page"{% endif %}>Report</a>
+  <a href="/runs/{{ run_id | urlencode }}/coverage"{% if current == "coverage" %} aria-current="page"{% endif %}>Coverage</a>
+  <a href="/runs/{{ run_id | urlencode }}/review"{% if current == "review" %} aria-current="page"{% endif %}>Review</a>
+</nav>

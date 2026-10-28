@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Runs - chatbot-redteam{% endblock %}
+{% block content %}
+<h1>Runs</h1>
+{% if runs %}
+<div class="table-wrap">
+<table>
+  <tr><th>Run</th><th>Endpoint</th><th>Status</th><th>Started</th><th>Review</th><th>Prompts by verdict, as run</th></tr>
+{% for run in runs %}
+  <tr>
+    <td>{% if run.readable %}<a href="/runs/{{ run.run_id | urlencode }}">{{ run.run_id }}</a>{% else %}{{ run.run_id }}{% endif %}</td>
+    <td>{{ run.endpoint_name or "-" }}</td>
+    <td>{{ run.status }}</td>
+    <td>{{ run.started_at or "-" }}</td>
+    <td>{% if not run.readable %}-{% elif run.finalized %}finalized{% else %}draft{% endif %}</td>
+    <td>{% for name, count in run.totals.items() %}{{ name }} {{ count }}{% if not loop.last %} &middot; {% endif %}{% else %}-{% endfor %}</td>
+  </tr>
+{% endfor %}
+</table>
+</div>
+<p class="note">Totals are the as-run tally, before any human review. A run marked unreadable has no usable run.json.</p>
+{% set readable = runs | selectattr("readable") | list %}
+{% if readable | length >= 2 %}
+<h2>Compare two runs</h2>
+<form class="compare" action="/compare" method="get">
+  <label>Baseline
+    <select name="baseline">
+{% for run in readable %}
+      <option value="{{ run.run_id }}"{% if loop.index == 2 %} selected{% endif %}>{{ run.run_id }}</option>
+{% endfor %}
+    </select>
+  </label>
+  <label>Run
+    <select name="run">
+{% for run in readable %}
+      <option value="{{ run.run_id }}"{% if loop.first %} selected{% endif %}>{{ run.run_id }}</option>
+{% endfor %}
+    </select>
+  </label>
+  <button type="submit">Compare</button>
+</form>
+{% endif %}
+{% else %}
+<p>No runs yet. Start one with <code>suite run</code>; it appears here once its folder is in the results directory.</p>
+{% endif %}
+{% endblock %}
